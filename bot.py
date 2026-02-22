@@ -64,25 +64,14 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показать меню команд"""
     await batya(update, context)
 async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показать меню команд"""
+    """Показать меню FK розыгрыша"""
     keyboard = [
-        [InlineKeyboardButton("🎨 Нарисовать", callback_data="help_draw"),
-         InlineKeyboardButton("🎤 Озвучить", callback_data="help_voice")],
-        [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
-         InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
-        [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
+        [InlineKeyboardButton("� FK Розыгрыш", callback_data="fk_raffle")]
     ]
 
     await update.message.reply_text(
         "👴 Батя на связи!\n\n"
-        "📝 Команды:\n"
-        "/draw [текст] — нарисовать картинку\n"
-        "/voice [текст] — озвучить текст\n"
-        "/roulette [ставка] — русская рулетка\n"
-        "/balance — твой баланс\n"
-        "/promo — получить промокод 😏\n"
-        "/clear — очистить историю\n\n"
-        "Или просто пиши — поболтаем!",
+        "🎰 Жми кнопку для розыгрыша!",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -287,6 +276,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     user = query.from_user
     data = query.data
+    
+    if data == "fk_raffle":
+        # FK Розыгрыш
+        prizes = [
+            "🎉 Ты выиграл 100 FK коинов!",
+            "💰 Джекпот! 500 FK коинов твои!",
+            "😢 Не повезло, попробуй ещё раз!",
+            "🔥 Выиграл бонус x2 на следующий депозит!",
+            "🎁 Получи 50 фриспинов!",
+            "💎 VIP статус на 24 часа!",
+            "😅 Пусто... Повезёт в следующий раз!",
+        ]
+        result = random.choice(prizes)
+        await query.edit_message_text(
+            f"🎰 FK РОЗЫГРЫШ\n\n{result}",
+            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🔄 Ещё раз", callback_data="fk_raffle")]])
+        )
+        await query.answer()
+        return
     
     if data == "deposit":
         keyboard = [
