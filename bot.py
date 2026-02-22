@@ -57,14 +57,33 @@ def get_balance(user_id: int) -> int:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     conversation_history[user_id] = []
-    
+    await update.message.reply_text("👋 Йо! Напиши /menu чтобы увидеть команды")
+
+
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показать меню команд"""
+    await batya(update, context)
+async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показать меню команд"""
+    keyboard = [
+        [InlineKeyboardButton("🎨 Нарисовать", callback_data="help_draw"),
+         InlineKeyboardButton("🎤 Озвучить", callback_data="help_voice")],
+        [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
+         InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
+        [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
+    ]
+
     await update.message.reply_text(
-        "Приветствую, искатель знаний! 🌟\n\n"
-        "Я готов к глубокому диалогу на любые темы.\n\n"
-        "Команды:\n"
-        "/clear — очистить историю\n"
-        "/vnuk — узнать кто я\n\n"
-        "О чём поговорим?"
+        "👴 Батя на связи!\n\n"
+        "📝 Команды:\n"
+        "/draw [текст] — нарисовать картинку\n"
+        "/voice [текст] — озвучить текст\n"
+        "/roulette [ставка] — русская рулетка\n"
+        "/balance — твой баланс\n"
+        "/promo — получить промокод 😏\n"
+        "/clear — очистить историю\n\n"
+        "Или просто пиши — поболтаем!",
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 
@@ -72,6 +91,62 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
     conversation_history[user_id] = []
     await update.message.reply_text("История очищена! ✨")
+
+
+async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Генерация картинки через DALL-E"""
+    if not context.args:
+        await update.message.reply_text("Напиши что нарисовать: /draw котик в космосе")
+        return
+    
+    prompt = " ".join(context.args)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
+    
+    try:
+        response = client.images.generate(
+            model="dall-e-3",
+            prompt=prompt,
+            size="1024x1024",
+            quality="standard",
+            n=1
+        )
+        
+        image_url = response.data[0].url
+        await update.message.reply_photo(photo=image_url, caption=f"🎨 {prompt}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка DALL-E: {e}")
+        await update.message.reply_text("Не получилось нарисовать, попробуй другой запрос.")
+
+
+async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Озвучка текста через TTS"""
+    if not context.args:
+        await update.message.reply_text("Напиши что озвучить: /voice Привет, как дела?")
+        return
+    
+    text = " ".join(context.args)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="record_voice")
+    
+    try:
+        response = client.audio.speech.create(
+            model="tts-1",
+            voice="onyx",
+            input=text
+        )
+        
+        # Сохраняем во временный файл
+        audio_path = f"/tmp/voice_{update.effective_user.id}.mp3"
+        response.stream_to_file(audio_path)
+        
+        with open(audio_path, "rb") as audio:
+            await update.message.reply_voice(voice=audio)
+        
+        os.remove(audio_path)
+        
+    except Exception as e:
+        logger.error(f"Ошибка TTS: {e}")
+        await update.message.reply_text("Не получилось озвучить.")
 
 
 async def vnuk(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -559,7 +634,11 @@ def main() -> None:
     application = Application.builder().token(token).build()
     
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("menu", menu))
+    application.add_handler(CommandHandler("batya", batya))
     application.add_handler(CommandHandler("clear", clear))
+    application.add_handler(CommandHandler("draw", draw))
+    application.add_handler(CommandHandler("voice", voice))
     application.add_handler(CommandHandler("promo", promo))
     application.add_handler(CommandHandler("roulette", roulette))
     application.add_handler(CommandHandler("accept", accept))
