@@ -61,8 +61,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показать меню команд"""
-    await batya(update, context)
+    """Показать меню FK розыгрыша"""
+    keyboard = [
+        [InlineKeyboardButton("🎰 FK Розыгрыш", callback_data="fk_raffle")]
+    ]
+    
+    await update.message.reply_text(
+        "🎰 Жми кнопку для розыгрыша!",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
 async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показать меню FK розыгрыша"""
     keyboard = [
