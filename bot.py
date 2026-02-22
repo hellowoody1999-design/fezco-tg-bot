@@ -33,7 +33,7 @@ active_games: dict[int, dict] = {}
 
 def get_balance(user_id: int) -> int:
     if user_id not in balances:
-        balances[user_id] = 1000
+        balances[user_id] = 10
     return balances[user_id]
 
 
