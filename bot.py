@@ -427,7 +427,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     message_lower = user_message.lower()
     
     # Имена на которые откликается бот
-    bot_names = ["бот", "bot", "внук", "vnuk", "саша", "sasha"]
+    bot_names = ["бот", "bot", "батя", "батю", "бать"]
     
     # Проверяем это личка или группа
     is_private = update.effective_chat.type == "private"
