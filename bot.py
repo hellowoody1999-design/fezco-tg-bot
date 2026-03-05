@@ -41,6 +41,56 @@ def get_balance(user_id: int) -> int:
     return balances[user_id]
 
 
+async def fetch_crypto_rates() -> None:
+    """Получает актуальные курсы обмена из CryptoBot"""
+    global crypto_rates, last_update_time
+    
+    crypto_token = os.getenv("CRYPTO_BOT_TOKEN")
+    if not crypto_token:
+        logger.warning("CRYPTO_BOT_TOKEN не установлен, используем Binance P2P")
+        await fetch_binance_p2p()
+        return
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"Crypto-Pay-API-Token": crypto_token}
+            
+            async with session.get("https://pay.crypt.bot/api/getExchangeRates", headers=headers) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    
+                    if not data.get("ok"):
+                        logger.error(f"CryptoBot API error: {data}")
+                        await fetch_binance_p2p()
+                        return
+                    
+                    rates = {}
+                    for rate_info in data.get("result", []):
+                        source = rate_info.get("source", "")
+                        target = rate_info.get("target", "")
+                        rate = float(rate_info.get("rate", 0))
+                        is_valid = rate_info.get("is_valid", False)
+
+                        if source and target and rate > 0 and is_valid:
+                            pair_name = f"{source}/{target}"
+                            rates[pair_name] = {
+                                "price": rate,
+                                "rate": rate,
+                                "is_valid": is_valid,
+                                "source": "CryptoBot"
+                            }
+
+                    crypto_rates = rates
+                    last_update_time = datetime.now().strftime("%H:%M:%S")
+                    logger.info(f"CryptoBot курсы обновлены: {len(rates)} пар")
+                else:
+                    logger.error(f"HTTP {resp.status} при получении курсов CryptoBot")
+                    await fetch_binance_p2p()
+    except Exception as e:
+        logger.error(f"Ошибка получения курсов CryptoBot: {e}")
+        await fetch_binance_p2p()
+
+
 async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Показывает актуальные курсы обмена"""
     if not crypto_rates:
