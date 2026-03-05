@@ -42,57 +42,64 @@ def get_balance(user_id: int) -> int:
 
 
 async def fetch_crypto_rates() -> None:
-    """Получает актуальные курсы P2P из CryptoBot Exchange API"""
+    """Получает актуальные курсы криптовалют"""
     global crypto_rates, last_update_time
 
     try:
         async with aiohttp.ClientSession() as session:
-            # CryptoBot Exchange API - публичный эндпоинт (исправленный URL)
-            async with session.get("https://pay.crypt.bot/api/getExchangeRates") as resp:
+            # Используем публичный API Binance для курсов
+            async with session.get("https://api.binance.com/api/v3/ticker/24hr") as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    
-                    if not data.get("ok"):
-                        logger.error(f"CryptoBot API error: {data}")
-                        return
-                    
                     rates = {}
-                    # Обрабатываем все торговые пары
-                    for rate_info in data.get("result", []):
-                        source = rate_info.get("source", "")
-                        target = rate_info.get("target", "")
-                        rate = float(rate_info.get("rate", 0))
-                        is_valid = rate_info.get("is_valid", False)
 
-                        if source and target and rate > 0:
-                            pair_name = f"{source}/{target}"
+                    # Обрабатываем популярные пары
+                    for ticker in data:
+                        symbol = ticker.get("symbol", "")
+                        price = float(ticker.get("lastPrice", 0))
+                        volume = float(ticker.get("quoteVolume", 0))
+                        
+                        # Форматируем название пары (BTCUSDT -> BTC/USDT)
+                        if symbol.endswith("USDT"):
+                            base = symbol[:-4]
+                            pair_name = f"{base}/USDT"
+                        elif symbol.endswith("BTC"):
+                            base = symbol[:-3]
+                            pair_name = f"{base}/BTC"
+                        else:
+                            continue
+                        
+                        if price > 0:
                             rates[pair_name] = {
-                                "rate": rate,
-                                "volume_24h": 0,  # API не предоставляет объем
-                                "is_valid": is_valid
+                                "rate": price,
+                                "volume_24h": volume,
+                                "is_valid": True
                             }
 
                     crypto_rates = rates
                     last_update_time = datetime.now().strftime("%H:%M:%S")
-                    logger.info(f"Курсы CryptoBot обновлены: {len(rates)} пар")
+                    logger.info(f"Курсы обновлены: {len(rates)} пар")
                 else:
                     logger.error(f"HTTP {resp.status} при получении курсов")
     except Exception as e:
-        logger.error(f"Ошибка получения курсов CryptoBot: {e}")
+        logger.error(f"Ошибка получения курсов: {e}")
 
 
 
 
 async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает актуальные курсы P2P продажи с сортировкой по цене"""
+    """Показывает актуальные курсы криптовалют с сортировкой по цене"""
     if not crypto_rates:
-        await update.message.reply_text("⏳ Курсы загружаются, попробуй через пару секунд...")
-        return
+        await update.message.reply_text("⏳ Загружаю курсы...")
+        await fetch_crypto_rates()
+        if not crypto_rates:
+            await update.message.reply_text("❌ Не удалось загрузить курсы, попробуй позже")
+            return
     
     # Сортируем пары по цене (от высокой к низкой)
     sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
     
-    message = f"💱 КУРСЫ CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
+    message = f"💱 КУРСЫ КРИПТОВАЛЮТ\n🕐 Обновлено: {last_update_time}\n\n"
     message += "📈 ТОП КУРСЫ:\n\n"
     
     # Показываем топ-10 пар с самым высоким курсом
@@ -131,7 +138,7 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/voice — озвучить\n"
         "/roulette — рулетка\n"
         "/balance — баланс\n"
-        "/crypto — курсы CryptoBot\n"
+        "/crypto — курсы крипты\n"
         "/promo — промокод",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -313,7 +320,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Сортируем пары по цене (от высокой к низкой)
         sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
         
-        message = f"💱 КУРСЫ CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
+        message = f"💱 КУРСЫ КРИПТОВАЛЮТ\n🕐 Обновлено: {last_update_time}\n\n"
         message += "📈 ТОП КУРСЫ:\n\n"
         
         for i, (pair, pair_data) in enumerate(sorted_pairs[:10], 1):
@@ -340,7 +347,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "help_voice": "🎤 Напиши /voice и текст для озвучки",
             "help_roulette": "🔫 Ответь на сообщение соперника: /roulette 100",
             "show_balance": f"💰 Твой баланс: {get_balance(user.id)} монет",
-            "show_crypto": "💱 Напиши /crypto для курсов CryptoBot",
+            "show_crypto": "💱 Напиши /crypto для курсов крипты",
             "get_promo": "🎁 Напиши /promo для промокода"
         }
         await query.answer(texts[data], show_alert=True)
@@ -431,6 +438,13 @@ def main() -> None:
     application.add_handler(CommandHandler("crypto", crypto))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Загружаем курсы при старте
+    async def post_init(app):
+        await fetch_crypto_rates()
+        logger.info("Начальная загрузка курсов завершена")
+    
+    application.post_init = post_init
     
     logger.info("Бот запущен...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
