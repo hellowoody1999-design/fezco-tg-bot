@@ -32,8 +32,6 @@ SYSTEM_PROMPT = """Ты — умный собеседник. Правила:
 conversation_history: dict[int, list[dict]] = {}
 balances: dict[int, int] = {}
 active_games: dict[int, dict] = {}
-crypto_rates: dict[str, dict] = {}
-last_update_time: str = "Не обновлялось"
 
 def get_balance(user_id: int) -> int:
     if user_id not in balances:
@@ -41,57 +39,6 @@ def get_balance(user_id: int) -> int:
     return balances[user_id]
 
 
-async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает актуальные курсы обмена"""
-    if not crypto_rates:
-        await update.message.reply_text("⏳ Загружаю курсы обмена...")
-        await fetch_crypto_rates()
-        if not crypto_rates:
-            await update.message.reply_text("❌ Не удалось загрузить курсы, попробуй позже")
-            return
-
-    # Проверяем источник данных
-    first_item = next(iter(crypto_rates.values()))
-    source = first_item.get("source", "Unknown")
-
-    if source == "CryptoBot":
-        # Показываем курсы CryptoBot
-        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
-
-        message = f"💱 КУРСЫ ОБМЕНА CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
-        message += "📈 ЛУЧШИЕ КУРСЫ:\n\n"
-
-        for i, (pair, data) in enumerate(sorted_pairs[:15], 1):
-            rate = data["rate"]
-            message += f"{i}. {pair}: {rate:,.4f}\n"
-
-    else:
-        # Показываем Binance P2P
-        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1].get("price", 0), reverse=True)
-
-        message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
-        message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
-
-        for i, (key, data) in enumerate(sorted_pairs[:10], 1):
-            if "min" not in data:
-                continue
-
-            price = data["price"]
-            min_amt = data["min"]
-            max_amt = data["max"]
-            available = data["available"]
-            nickname = data["nickname"]
-            orders = data["orders"]
-            completion = data["completion"]
-
-            message += f"{i}. 💰 {price:.2f} ₽\n"
-            message += f"   👤 {nickname}\n"
-            message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
-            message += f"   💵 {min_amt:.0f} - {max_amt:.0f} USDT\n"
-            message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
-
-    keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
-    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -144,69 +91,6 @@ async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def fetch_binance_p2p() -> None:
-    """Fallback: получает P2P объявления с Binance"""
-    global crypto_rates, last_update_time
-
-    try:
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "asset": "USDT",
-                "fiat": "RUB",
-                "merchantCheck": False,
-                "page": 1,
-                "payTypes": [],
-                "publisherType": None,
-                "rows": 20,
-                "tradeType": "SELL"
-            }
-
-            headers = {
-                "Content-Type": "application/json",
-                "User-Agent": "Mozilla/5.0"
-            }
-
-            async with session.post(
-                "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
-                json=payload,
-                headers=headers
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    rates = {}
-
-                    if data.get("data"):
-                        ads = data["data"]
-                        sorted_ads = sorted(ads, key=lambda x: float(x["adv"]["price"]), reverse=True)
-
-                        for i, ad in enumerate(sorted_ads[:10], 1):
-                            adv = ad["adv"]
-                            advertiser = ad["advertiser"]
-
-                            price = float(adv["price"])
-                            min_amount = float(adv["minSingleTransAmount"])
-                            max_amount = float(adv["dynamicMaxSingleTransAmount"])
-                            available = float(adv["surplusAmount"])
-
-                            rates[f"P2P_{i}"] = {
-                                "price": price,
-                                "min": min_amount,
-                                "max": max_amount,
-                                "available": available,
-                                "nickname": advertiser.get("nickName", "Unknown"),
-                                "orders": advertiser.get("monthOrderCount", 0),
-                                "completion": advertiser.get("monthFinishRate", 0),
-                                "rate": price,
-                                "source": "Binance P2P"
-                            }
-
-                        crypto_rates = rates
-                        last_update_time = datetime.now().strftime("%H:%M:%S")
-                        logger.info(f"Binance P2P объявления обновлены: {len(rates)} продавцов")
-                else:
-                    logger.error(f"HTTP {resp.status} при получении Binance P2P")
-    except Exception as e:
-        logger.error(f"Ошибка получения Binance P2P: {e}")
 
 
 
@@ -252,8 +136,7 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
          InlineKeyboardButton("🎤 Озвучить", callback_data="help_voice")],
         [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
          InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
-        [InlineKeyboardButton("💱 Курсы P2P", callback_data="show_crypto"),
-         InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
+        [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
     ]
     await update.message.reply_text(
         "👴 Батя на связи!\n\n"
@@ -261,7 +144,6 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/voice — озвучить\n"
         "/roulette — рулетка\n"
         "/balance — баланс\n"
-        "/crypto — P2P обмен\n"
         "/promo — промокод",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -558,7 +440,6 @@ def main() -> None:
     application.add_handler(CommandHandler("promo", promo))
     application.add_handler(CommandHandler("roulette", roulette))
     application.add_handler(CommandHandler("balance", balance))
-    application.add_handler(CommandHandler("crypto", crypto))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
