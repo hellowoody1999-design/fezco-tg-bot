@@ -433,7 +433,11 @@ def main() -> None:
     
     # Автообновление курсов каждые 5 минут
     job_queue = application.job_queue
-    job_queue.run_repeating(update_rates_job, interval=300, first=10)
+    if job_queue:
+        job_queue.run_repeating(update_rates_job, interval=300, first=10)
+        logger.info("Автообновление курсов включено (каждые 5 минут)")
+    else:
+        logger.warning("JobQueue недоступен, автообновление отключено")
     
     logger.info("Бот запущен...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
