@@ -41,13 +41,62 @@ def get_balance(user_id: int) -> int:
     return balances[user_id]
 
 
-async def fetch_crypto_rates() -> None:
-    """Получает актуальные P2P объявления для обмена"""
+async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает актуальные курсы обмена"""
+    if not crypto_rates:
+        await update.message.reply_text("⏳ Загружаю курсы обмена...")
+        await fetch_crypto_rates()
+        if not crypto_rates:
+            await update.message.reply_text("❌ Не удалось загрузить курсы, попробуй позже")
+            return
+
+    # Проверяем источник данных
+    first_item = next(iter(crypto_rates.values()))
+    source = first_item.get("source", "Unknown")
+
+    if source == "CryptoBot":
+        # Показываем курсы CryptoBot
+        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
+
+        message = f"💱 КУРСЫ ОБМЕНА CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
+        message += "📈 ЛУЧШИЕ КУРСЫ:\n\n"
+
+        for i, (pair, data) in enumerate(sorted_pairs[:15], 1):
+            rate = data["rate"]
+            message += f"{i}. {pair}: {rate:,.4f}\n"
+
+    else:
+        # Показываем Binance P2P
+        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["price"], reverse=True)
+
+        message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
+        message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
+
+        for i, (key, data) in enumerate(sorted_pairs[:10], 1):
+            price = data["price"]
+            min_amt = data.get("min", 0)
+            max_amt = data.get("max", 0)
+            available = data.get("available", 0)
+            nickname = data.get("nickname", "Unknown")
+            orders = data.get("orders", 0)
+            completion = data.get("completion", 0)
+
+            message += f"{i}. 💰 {price:.2f} ₽\n"
+            message += f"   👤 {nickname}\n"
+            message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
+            message += f"   💵 {min_amt:.0f} - {max_amt:.0f} USDT\n"
+            message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
+
+    keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
+    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+async def fetch_binance_p2p() -> None:
+    """Fallback: получает P2P объявления с Binance"""
     global crypto_rates, last_update_time
 
     try:
         async with aiohttp.ClientSession() as session:
-            # Binance P2P API для продажи USDT за RUB (самые выгодные курсы)
             payload = {
                 "asset": "USDT",
                 "fiat": "RUB",
@@ -56,7 +105,7 @@ async def fetch_crypto_rates() -> None:
                 "payTypes": [],
                 "publisherType": None,
                 "rows": 20,
-                "tradeType": "SELL"  # Продажа USDT (покупка за рубли)
+                "tradeType": "SELL"
             }
 
             headers = {
@@ -75,11 +124,9 @@ async def fetch_crypto_rates() -> None:
 
                     if data.get("data"):
                         ads = data["data"]
-
-                        # Сортируем по цене (от высокой к низкой - выгоднее продавать)
                         sorted_ads = sorted(ads, key=lambda x: float(x["adv"]["price"]), reverse=True)
 
-                        for i, ad in enumerate(sorted_ads[:10], 1):  # Топ-10 самых выгодных
+                        for i, ad in enumerate(sorted_ads[:10], 1):
                             adv = ad["adv"]
                             advertiser = ad["advertiser"]
 
@@ -96,18 +143,17 @@ async def fetch_crypto_rates() -> None:
                                 "nickname": advertiser.get("nickName", "Unknown"),
                                 "orders": advertiser.get("monthOrderCount", 0),
                                 "completion": advertiser.get("monthFinishRate", 0),
-                                "rate": price  # Для сортировки
+                                "rate": price,
+                                "source": "Binance P2P"
                             }
 
                         crypto_rates = rates
                         last_update_time = datetime.now().strftime("%H:%M:%S")
-                        logger.info(f"P2P объявления обновлены: {len(rates)} продавцов")
-                    else:
-                        logger.error("Нет данных P2P")
+                        logger.info(f"Binance P2P объявления обновлены: {len(rates)} продавцов")
                 else:
-                    logger.error(f"HTTP {resp.status} при получении P2P")
+                    logger.error(f"HTTP {resp.status} при получении Binance P2P")
     except Exception as e:
-        logger.error(f"Ошибка получения P2P: {e}")
+        logger.error(f"Ошибка получения Binance P2P: {e}")
 
 
 
