@@ -47,25 +47,29 @@ async def fetch_crypto_rates() -> None:
 
     try:
         async with aiohttp.ClientSession() as session:
-            # CryptoBot Exchange API - публичный эндпоинт
-            async with session.get("https://api.crypt.bot/exchange") as resp:
+            # CryptoBot Exchange API - публичный эндпоинт (исправленный URL)
+            async with session.get("https://pay.crypt.bot/api/getExchangeRates") as resp:
                 if resp.status == 200:
                     data = await resp.json()
+                    
+                    if not data.get("ok"):
+                        logger.error(f"CryptoBot API error: {data}")
+                        return
+                    
                     rates = {}
-
                     # Обрабатываем все торговые пары
-                    for pair in data:
-                        base = pair.get("base", "")
-                        quote = pair.get("quote", "")
-                        last_price = float(pair.get("last_price", 0))
-                        volume_24h = float(pair.get("volume_24h_usd", 0))
+                    for rate_info in data.get("result", []):
+                        source = rate_info.get("source", "")
+                        target = rate_info.get("target", "")
+                        rate = float(rate_info.get("rate", 0))
+                        is_valid = rate_info.get("is_valid", False)
 
-                        if base and quote and last_price > 0:
-                            pair_name = f"{base}/{quote}"
+                        if source and target and rate > 0:
+                            pair_name = f"{source}/{target}"
                             rates[pair_name] = {
-                                "rate": last_price,
-                                "volume_24h": volume_24h,
-                                "is_valid": True
+                                "rate": rate,
+                                "volume_24h": 0,  # API не предоставляет объем
+                                "is_valid": is_valid
                             }
 
                     crypto_rates = rates
@@ -417,7 +421,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Техническая заминка. Попробуй ещё раз.")
 
 
-async def main() -> None:
+def main() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN не установлен")
@@ -437,15 +441,12 @@ async def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
     # Запускаем автообновление курсов в фоне
-    asyncio.create_task(auto_update_rates())
+    application.create_task(auto_update_rates())
     logger.info("Автообновление курсов запущено (каждые 5 минут)")
     
-    # Первое обновление сразу
-    await fetch_crypto_rates()
-    
     logger.info("Бот запущен...")
-    await application.run_polling(allowed_updates=Update.ALL_TYPES)
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
