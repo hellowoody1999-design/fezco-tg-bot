@@ -57,7 +57,8 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
          InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
         [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo"),
-         InlineKeyboardButton("🔐 VPN", callback_data="show_vpn")]
+         InlineKeyboardButton("🔐 VPN", callback_data="show_vpn")],
+        [InlineKeyboardButton("💻 RDP", callback_data="show_rdp")]
     ]
     await update.message.reply_text(
         "👴 Батя на связи!\n\n"
@@ -66,7 +67,8 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/roulette — рулетка\n"
         "/balance — баланс\n"
         "/promo — промокод\n"
-        "/vpn — VPN доступ",
+        "/vpn — VPN доступ\n"
+        "/rdp — RDP сервера",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -166,81 +168,81 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or f"user_{user_id}"
-    
-    await update.message.reply_text("🔄 Создаю VPN-ключ, подожди...")
-    
-    xui_url = os.getenv("XUI_API_URL")
-    xui_key = os.getenv("XUI_API_KEY")
-    
-    if not xui_url or not xui_key:
-        await update.message.reply_text("❌ VPN временно недоступен")
-        return
+    await update.message.reply_text(
+        "🔐 VPN ДОСТУП\n\n"
+        "🌐 Панель управления:\n"
+        "http://109.61.108.99:42311/BqXkFnZgIRjYhUwQvE/\n\n"
+        "👤 Логин: admin\n"
+        "🔑 Пароль: admin123\n\n"
+        "📱 Создай свой ключ в панели:\n"
+        "1. Открой панель\n"
+        "2. Перейди в Inbounds\n"
+        "3. Нажми на иконку QR-кода\n"
+        "4. Скопируй ссылку или отсканируй QR\n\n"
+        "💡 Приложения:\n"
+        "• 🤖 Android: v2rayNG\n"
+        "• 🍎 iOS: Shadowrocket\n"
+        "• 💻 Windows: v2rayN"
+    )
+
+
+async def rdp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    keyboard = [
+        [InlineKeyboardButton("💻 Купить RDP", callback_data="rdp_buy"),
+         InlineKeyboardButton("📋 Мои RDP", callback_data="rdp_list")],
+        [InlineKeyboardButton("💰 Баланс", callback_data="rdp_balance"),
+         InlineKeyboardButton("📊 Тарифы", callback_data="rdp_tariffs")]
+    ]
+    await update.message.reply_text(
+        "💻 RDP СЕРВЕРА\n\n"
+        "Выбери действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def get_rdp_balance() -> dict:
+    api_key = os.getenv("ONEDASH_API_KEY")
+    if not api_key:
+        return {"type": False, "error": "API ключ не настроен"}
     
     try:
         async with aiohttp.ClientSession() as session:
-            # Создаём клиента в 3X-UI
-            client_data = {
-                "id": user_id,
-                "email": f"{user_name}_{user_id}",
-                "enable": True,
-                "expiryTime": 0,  # Без ограничения
-                "totalGB": 0,  # Без лимита трафика
-                "flow": "",
-                "limitIp": 2  # Максимум 2 устройства
-            }
-            
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {xui_key}"
-            }
-            
-            # Получаем список inbound'ов
-            async with session.get(f"{xui_url}/panel/api/inbounds/list", headers=headers) as resp:
-                if resp.status != 200:
-                    await update.message.reply_text("❌ Ошибка подключения к VPN серверу")
-                    return
-                
-                data = await resp.json()
-                if not data.get("success") or not data.get("obj"):
-                    await update.message.reply_text("❌ VPN сервер не настроен")
-                    return
-                
-                # Берём первый inbound
-                inbound = data["obj"][0]
-                inbound_id = inbound["id"]
-            
-            # Добавляем клиента
-            async with session.post(
-                f"{xui_url}/panel/api/inbounds/addClient",
-                headers=headers,
-                json={"id": inbound_id, "settings": client_data}
-            ) as resp:
-                result = await resp.json()
-                
-                if result.get("success"):
-                    # Получаем ссылку на подключение
-                    config_link = f"vless://{user_id}@109.61.108.99:443?type=tcp&security=tls#{user_name}"
-                    
-                    await update.message.reply_text(
-                        f"✅ VPN-КЛЮЧ СОЗДАН!\n\n"
-                        f"📱 Скопируй ссылку:\n\n"
-                        f"`{config_link}`\n\n"
-                        f"💡 Приложения:\n"
-                        f"• 🤖 Android: v2rayNG\n"
-                        f"• 🍎 iOS: Shadowrocket\n"
-                        f"• 💻 Windows: v2rayN\n\n"
-                        f"🔥 Просто вставь ссылку в приложение!",
-                        parse_mode="Markdown"
-                    )
-                else:
-                    await update.message.reply_text(f"❌ Ошибка: {result.get('msg', 'Неизвестная ошибка')}")
-    
+            headers = {"Api-Key": api_key}
+            async with session.get("https://rdp-onedash.ru/web-api/balance", headers=headers) as resp:
+                return await resp.json()
     except Exception as e:
-        logger.error(f"VPN error: {e}")
-        await update.message.reply_text("❌ Не удалось создать VPN-ключ, попробуй позже")
+        logger.error(f"RDP balance error: {e}")
+        return {"type": False, "error": str(e)}
+
+
+async def get_rdp_tariffs() -> dict:
+    api_key = os.getenv("ONEDASH_API_KEY")
+    if not api_key:
+        return {"type": False, "error": "API ключ не настроен"}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"Api-Key": api_key}
+            async with session.get("https://rdp-onedash.ru/web-api/tariffs", headers=headers) as resp:
+                return await resp.json()
+    except Exception as e:
+        logger.error(f"RDP tariffs error: {e}")
+        return {"type": False, "error": str(e)}
+
+
+async def get_rdp_orders() -> dict:
+    api_key = os.getenv("ONEDASH_API_KEY")
+    if not api_key:
+        return {"type": False, "error": "API ключ не настроен"}
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            headers = {"Api-Key": api_key}
+            async with session.get("https://rdp-onedash.ru/web-api/all-orders", headers=headers) as resp:
+                return await resp.json()
+    except Exception as e:
+        logger.error(f"RDP orders error: {e}")
+        return {"type": False, "error": str(e)}
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -315,14 +317,78 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text("💸 Для вывода напиши админу")
         await query.answer()
     
-    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "get_promo", "show_vpn"]:
+    elif data == "rdp_balance":
+        result = await get_rdp_balance()
+        if result.get("type"):
+            balance = result["data"]["balance"]
+            currency = result["data"]["currency"]
+            await query.answer(f"💰 Баланс: {balance} {currency}", show_alert=True)
+        else:
+            await query.answer("❌ Ошибка получения баланса", show_alert=True)
+    
+    elif data == "rdp_tariffs":
+        result = await get_rdp_tariffs()
+        if result.get("type"):
+            tariffs = result["data"]
+            message = "📊 ТАРИФЫ RDP:\n\n"
+            for t in tariffs[:3]:
+                name = t["name"]
+                cpu = t["config_info"]["cpu"]
+                ram = t["config_info"]["ram"]
+                hdd = t["config_info"]["hard"]
+                price_msk = t["msk_prices"][0]["price"]
+                price_ams = t["ams_prices"][0]["price"]
+                message += f"💻 {name}\n"
+                message += f"   CPU: {cpu} | RAM: {ram}GB | HDD: {hdd}GB\n"
+                message += f"   🇷🇺 Москва: {price_msk}₽/7дн\n"
+                message += f"   🇳🇱 Амстердам: {price_ams}₽/7дн\n\n"
+            await query.edit_message_text(message)
+        else:
+            await query.answer("❌ Ошибка получения тарифов", show_alert=True)
+    
+    elif data == "rdp_list":
+        result = await get_rdp_orders()
+        if result.get("type"):
+            orders = result["data"]
+            if not orders:
+                await query.answer("📋 У тебя пока нет RDP серверов", show_alert=True)
+            else:
+                message = "📋 ТВОИ RDP СЕРВЕРА:\n\n"
+                for order in orders[:5]:
+                    order_id = order["order_id"]
+                    tariff = order["tariff"]["name"]
+                    location = "🇷🇺 Москва" if order["location"] == "msk" else "🇳🇱 Амстердам"
+                    days = order["finish_time"]["days_remaining"]
+                    for vps in order["vps_list"]:
+                        ip = vps["vps_ip"]
+                        status = "✅" if vps["vps_status"] == "runned" else "⏳"
+                        message += f"{status} {tariff} | {location}\n"
+                        message += f"   IP: {ip}\n"
+                        message += f"   Осталось: {days} дней\n\n"
+                await query.edit_message_text(message)
+        else:
+            await query.answer("❌ Ошибка получения списка", show_alert=True)
+    
+    elif data == "rdp_buy":
+        await query.edit_message_text(
+            "💻 КУПИТЬ RDP\n\n"
+            "Для покупки RDP сервера напиши админу:\n"
+            "@your_admin_username\n\n"
+            "Укажи:\n"
+            "• Тариф\n"
+            "• Локацию (Москва/Амстердам)\n"
+            "• Срок аренды"
+        )
+    
+    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "get_promo", "show_vpn", "show_rdp"]:
         texts = {
             "help_draw": "🎨 Напиши /draw и что нарисовать",
             "help_voice": "🎤 Напиши /voice и текст для озвучки",
             "help_roulette": "🔫 Ответь на сообщение соперника: /roulette 100",
             "show_balance": f"💰 Твой баланс: {get_balance(user.id)} монет",
             "get_promo": "🎁 Напиши /promo для промокода",
-            "show_vpn": "🔐 Напиши /vpn для VPN доступа"
+            "show_vpn": "🔐 Напиши /vpn для VPN доступа",
+            "show_rdp": "💻 Напиши /rdp для RDP серверов"
         }
         await query.answer(texts[data], show_alert=True)
 
@@ -410,6 +476,7 @@ def main() -> None:
     application.add_handler(CommandHandler("roulette", roulette))
     application.add_handler(CommandHandler("balance", balance))
     application.add_handler(CommandHandler("vpn", vpn))
+    application.add_handler(CommandHandler("rdp", rdp))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
