@@ -509,13 +509,6 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Загружаем курсы при старте
-    async def post_init(app):
-        await fetch_crypto_rates()
-        logger.info("Начальная загрузка курсов завершена")
-    
-    application.post_init = post_init
-    
     logger.info("Бот запущен...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
