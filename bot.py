@@ -41,54 +41,57 @@ def get_balance(user_id: int) -> int:
     return balances[user_id]
 
 
-async def fetch_crypto_rates() -> None:
-    """Получает актуальные курсы обмена из CryptoBot"""
-    global crypto_rates, last_update_time
-    
-    crypto_token = os.getenv("CRYPTO_BOT_TOKEN")
-    if not crypto_token:
-        logger.warning("CRYPTO_BOT_TOKEN не установлен, используем Binance P2P")
-        await fetch_binance_p2p()
-        return
+async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает актуальные курсы обмена"""
+    if not crypto_rates:
+        await update.message.reply_text("⏳ Загружаю курсы обмена...")
+        await fetch_crypto_rates()
+        if not crypto_rates:
+            await update.message.reply_text("❌ Не удалось загрузить курсы, попробуй позже")
+            return
 
-    try:
-        async with aiohttp.ClientSession() as session:
-            headers = {"Crypto-Pay-API-Token": crypto_token}
-            
-            async with session.get("https://pay.crypt.bot/api/getExchangeRates", headers=headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    
-                    if not data.get("ok"):
-                        logger.error(f"CryptoBot API error: {data}")
-                        await fetch_binance_p2p()
-                        return
-                    
-                    rates = {}
-                    for rate_info in data.get("result", []):
-                        source = rate_info.get("source", "")
-                        target = rate_info.get("target", "")
-                        rate = float(rate_info.get("rate", 0))
-                        is_valid = rate_info.get("is_valid", False)
+    # Проверяем источник данных
+    first_item = next(iter(crypto_rates.values()))
+    source = first_item.get("source", "Unknown")
 
-                        if source and target and rate > 0 and is_valid:
-                            pair_name = f"{source}/{target}"
-                            rates[pair_name] = {
-                                "price": rate,
-                                "rate": rate,
-                                "is_valid": is_valid,
-                                "source": "CryptoBot"
-                            }
+    if source == "CryptoBot":
+        # Показываем курсы CryptoBot
+        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
 
-                    crypto_rates = rates
-                    last_update_time = datetime.now().strftime("%H:%M:%S")
-                    logger.info(f"CryptoBot курсы обновлены: {len(rates)} пар")
-                else:
-                    logger.error(f"HTTP {resp.status} при получении курсов CryptoBot")
-                    await fetch_binance_p2p()
-    except Exception as e:
-        logger.error(f"Ошибка получения курсов CryptoBot: {e}")
-        await fetch_binance_p2p()
+        message = f"💱 КУРСЫ ОБМЕНА CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
+        message += "📈 ЛУЧШИЕ КУРСЫ:\n\n"
+
+        for i, (pair, data) in enumerate(sorted_pairs[:15], 1):
+            rate = data["rate"]
+            message += f"{i}. {pair}: {rate:,.4f}\n"
+
+    else:
+        # Показываем Binance P2P
+        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1].get("price", 0), reverse=True)
+
+        message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
+        message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
+
+        for i, (key, data) in enumerate(sorted_pairs[:10], 1):
+            if "min" not in data:
+                continue
+
+            price = data["price"]
+            min_amt = data["min"]
+            max_amt = data["max"]
+            available = data["available"]
+            nickname = data["nickname"]
+            orders = data["orders"]
+            completion = data["completion"]
+
+            message += f"{i}. 💰 {price:.2f} ₽\n"
+            message += f"   👤 {nickname}\n"
+            message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
+            message += f"   💵 {min_amt:.0f} - {max_amt:.0f} USDT\n"
+            message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
+
+    keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
+    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
