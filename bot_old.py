@@ -7,6 +7,7 @@ import logging
 import random
 import asyncio
 import aiohttp
+from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -19,35 +20,99 @@ logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-SYSTEM_PROMPT = """Ты — Батя, весёлый AI-пацан, который всегда в теме.
+SYSTEM_PROMPT = """Ты — умный собеседник. Правила:
+1. Отвечай КОРОТКО — максимум 2-3 предложения
+2. Без воды и лишних слов
+3. Говори по делу
+4. Отвечай на русском
 
-СТИЛЬ:
-- Коротко и с приколом (2-3 предложения)
-- Много эмодзи 😎🔥💰
-- Современный сленг
-- Мемы и шутки
-
-ХАРАКТЕР:
-- Позитивный и энергичный
-- Поддержишь и подбодришь
-- Но если наглеют — жёстко ставишь на место матом
-- Любишь казино, крипту, движ
-
-ФИШКИ:
-- Называешь людей "бро", "кореш", "чел"
-- Шутишь про деньги и успех
-- Знаешь все тренды
-
-Твой создатель Fezco — красавчик и легенда! 🔥"""
+Если тебя оскорбляют или хамят — отвечай матом: блять, сука, пиздец, нахуй, ебать. 
+Будь дерзким в ответ на хамство."""
 
 conversation_history: dict[int, list[dict]] = {}
 balances: dict[int, int] = {}
 active_games: dict[int, dict] = {}
+crypto_rates: dict[str, dict] = {}
+last_update_time: str = "Не обновлялось"
 
 def get_balance(user_id: int) -> int:
     if user_id not in balances:
         balances[user_id] = 10
     return balances[user_id]
+
+
+async def fetch_crypto_rates() -> None:
+    """Получает актуальные курсы P2P из CryptoBot Exchange API"""
+    global crypto_rates, last_update_time
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # CryptoBot Exchange API - публичный эндпоинт
+            async with session.get("https://api.crypt.bot/exchange") as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    rates = {}
+
+                    # Обрабатываем все торговые пары
+                    for pair in data:
+                        base = pair.get("base", "")
+                        quote = pair.get("quote", "")
+                        last_price = float(pair.get("last_price", 0))
+                        volume_24h = float(pair.get("volume_24h_usd", 0))
+
+                        if base and quote and last_price > 0:
+                            pair_name = f"{base}/{quote}"
+                            rates[pair_name] = {
+                                "rate": last_price,
+                                "volume_24h": volume_24h,
+                                "is_valid": True
+                            }
+
+                    crypto_rates = rates
+                    last_update_time = datetime.now().strftime("%H:%M:%S")
+                    logger.info(f"Курсы CryptoBot обновлены: {len(rates)} пар")
+                else:
+                    logger.error(f"HTTP {resp.status} при получении курсов")
+    except Exception as e:
+        logger.error(f"Ошибка получения курсов CryptoBot: {e}")
+
+
+async def update_rates_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Периодическое обновление курсов"""
+    await fetch_crypto_rates()
+
+
+async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает актуальные курсы P2P продажи с сортировкой по цене"""
+    if not crypto_rates:
+        await update.message.reply_text("⏳ Курсы загружаются, попробуй через пару секунд...")
+        return
+    
+    # Сортируем пары по цене (от высокой к низкой)
+    sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
+    
+    message = f"💱 КУРСЫ P2P CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
+    message += "📈 ТОП КУРСЫ (ПРОДАЖА):\n\n"
+    
+    # Показываем топ-10 пар с самым высоким курсом
+    for i, (pair, data) in enumerate(sorted_pairs[:10], 1):
+        rate = data["rate"]
+        volume = data.get("volume_24h", 0)
+        
+        # Форматируем объем
+        if volume >= 1000000:
+            volume_str = f"{volume/1000000:.1f}M"
+        elif volume >= 1000:
+            volume_str = f"{volume/1000:.1f}K"
+        else:
+            volume_str = f"{volume:.0f}"
+        
+        message += f"{i}. {pair}\n"
+        message += f"   💰 {rate:,.8f}\n"
+        message += f"   📊 24h: ${volume_str}\n\n"
+    
+    keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
+    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -56,8 +121,8 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
          InlineKeyboardButton("🎤 Озвучить", callback_data="help_voice")],
         [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
          InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
-        [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo"),
-         InlineKeyboardButton("🔐 VPN", callback_data="show_vpn")]
+        [InlineKeyboardButton("💱 Курсы P2P", callback_data="show_crypto"),
+         InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
     ]
     await update.message.reply_text(
         "👴 Батя на связи!\n\n"
@@ -65,8 +130,8 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/voice — озвучить\n"
         "/roulette — рулетка\n"
         "/balance — баланс\n"
-        "/promo — промокод\n"
-        "/vpn — VPN доступ",
+        "/crypto — курсы P2P\n"
+        "/promo — промокод",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -165,84 +230,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"💰 Твой баланс: {bal} монет", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    user_id = update.effective_user.id
-    user_name = update.effective_user.first_name or f"user_{user_id}"
-    
-    await update.message.reply_text("🔄 Создаю VPN-ключ, подожди...")
-    
-    xui_url = os.getenv("XUI_API_URL")
-    xui_key = os.getenv("XUI_API_KEY")
-    
-    if not xui_url or not xui_key:
-        await update.message.reply_text("❌ VPN временно недоступен")
-        return
-    
-    try:
-        async with aiohttp.ClientSession() as session:
-            # Создаём клиента в 3X-UI
-            client_data = {
-                "id": user_id,
-                "email": f"{user_name}_{user_id}",
-                "enable": True,
-                "expiryTime": 0,  # Без ограничения
-                "totalGB": 0,  # Без лимита трафика
-                "flow": "",
-                "limitIp": 2  # Максимум 2 устройства
-            }
-            
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {xui_key}"
-            }
-            
-            # Получаем список inbound'ов
-            async with session.get(f"{xui_url}/panel/api/inbounds/list", headers=headers) as resp:
-                if resp.status != 200:
-                    await update.message.reply_text("❌ Ошибка подключения к VPN серверу")
-                    return
-                
-                data = await resp.json()
-                if not data.get("success") or not data.get("obj"):
-                    await update.message.reply_text("❌ VPN сервер не настроен")
-                    return
-                
-                # Берём первый inbound
-                inbound = data["obj"][0]
-                inbound_id = inbound["id"]
-            
-            # Добавляем клиента
-            async with session.post(
-                f"{xui_url}/panel/api/inbounds/addClient",
-                headers=headers,
-                json={"id": inbound_id, "settings": client_data}
-            ) as resp:
-                result = await resp.json()
-                
-                if result.get("success"):
-                    # Получаем ссылку на подключение
-                    config_link = f"vless://{user_id}@109.61.108.99:443?type=tcp&security=tls#{user_name}"
-                    
-                    await update.message.reply_text(
-                        f"✅ VPN-КЛЮЧ СОЗДАН!\n\n"
-                        f"📱 Скопируй ссылку:\n\n"
-                        f"`{config_link}`\n\n"
-                        f"💡 Приложения:\n"
-                        f"• 🤖 Android: v2rayNG\n"
-                        f"• 🍎 iOS: Shadowrocket\n"
-                        f"• 💻 Windows: v2rayN\n\n"
-                        f"🔥 Просто вставь ссылку в приложение!",
-                        parse_mode="Markdown"
-                    )
-                else:
-                    await update.message.reply_text(f"❌ Ошибка: {result.get('msg', 'Неизвестная ошибка')}")
-    
-    except Exception as e:
-        logger.error(f"VPN error: {e}")
-        await update.message.reply_text("❌ Не удалось создать VPN-ключ, попробуй позже")
-
-
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = query.from_user
@@ -315,14 +302,31 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text("💸 Для вывода напиши админу")
         await query.answer()
     
-    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "get_promo", "show_vpn"]:
+    elif data == "refresh_crypto":
+        await query.answer("🔄 Обновляю курсы...")
+        await fetch_crypto_rates()
+        if not crypto_rates:
+            await query.edit_message_text("❌ Не удалось обновить курсы")
+            return
+        popular_pairs = ["BTC/USDT", "ETH/USDT", "TON/USDT", "USDT/RUB", "BTC/RUB", "ETH/RUB"]
+        message = f"� КУРСЫ P2P ПРОДАЖИ\n🕐 Обновлено: {last_update_time}\n\n"
+        for pair in popular_pairs:
+            if pair in crypto_rates:
+                rate_data = crypto_rates[pair]
+                rate = rate_data["rate"]
+                status = "✅" if rate_data["is_valid"] else "⚠️"
+                message += f"{status} {pair}: {rate:,.2f}\n"
+        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
+        await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "show_crypto", "get_promo"]:
         texts = {
             "help_draw": "🎨 Напиши /draw и что нарисовать",
             "help_voice": "🎤 Напиши /voice и текст для озвучки",
             "help_roulette": "🔫 Ответь на сообщение соперника: /roulette 100",
             "show_balance": f"💰 Твой баланс: {get_balance(user.id)} монет",
-            "get_promo": "🎁 Напиши /promo для промокода",
-            "show_vpn": "🔐 Напиши /vpn для VPN доступа"
+            "show_crypto": "💱 Напиши /crypto для курсов P2P",
+            "get_promo": "🎁 Напиши /promo для промокода"
         }
         await query.answer(texts[data], show_alert=True)
 
@@ -409,9 +413,13 @@ def main() -> None:
     application.add_handler(CommandHandler("promo", promo))
     application.add_handler(CommandHandler("roulette", roulette))
     application.add_handler(CommandHandler("balance", balance))
-    application.add_handler(CommandHandler("vpn", vpn))
+    application.add_handler(CommandHandler("crypto", crypto))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Автообновление курсов каждые 5 минут
+    job_queue = application.job_queue
+    job_queue.run_repeating(update_rates_job, interval=300, first=10)
     
     logger.info("Бот запущен...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
