@@ -165,16 +165,17 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    vpn_link = "ssconf://oosina.ru/vanya/40f8c3da-5c55-4168-ad0f-f180ec896ba2"
     await update.message.reply_text(
-        f"🔐 VPN ОТ ДЯДИ ВАНИ\n\n"
-        f"📱 Скопируй ссылку и открой в приложении:\n\n"
-        f"`{vpn_link}`\n\n"
-        f"💡 Приложения для подключения:\n"
-        f"• 🤖 Android: Shadowsocks\n"
+        f"🔐 VPN ДОСТУП\n\n"
+        f"🌐 Панель управления:\n"
+        f"http://109.61.108.99:42311/BqXkFnZgIRjYhUwQvE/\n\n"
+        f"👤 Логин: admin\n"
+        f"🔑 Пароль: admin123\n\n"
+        f"📱 Создай свой ключ в панели и подключайся!\n\n"
+        f"💡 Приложения:\n"
+        f"• 🤖 Android: v2rayNG\n"
         f"• 🍎 iOS: Shadowrocket\n"
-        f"• 💻 Windows: Shadowsocks-Windows\n\n"
-        f"✅ Просто скопируй ссылку и вставь в приложение!",
+        f"• 💻 Windows: v2rayN",
         parse_mode="Markdown"
     )
 
