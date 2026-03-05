@@ -6,8 +6,6 @@ import os
 import logging
 import random
 import asyncio
-import aiohttp
-from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -20,14 +18,26 @@ logger = logging.getLogger(__name__)
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-SYSTEM_PROMPT = """Ты — умный собеседник. Правила:
-1. Отвечай КОРОТКО — максимум 2-3 предложения
-2. Без воды и лишних слов
-3. Говори по делу
-4. Отвечай на русском
+SYSTEM_PROMPT = """Ты — Батя, весёлый AI-пацан, который всегда в теме.
 
-Если тебя оскорбляют или хамят — отвечай матом: блять, сука, пиздец, нахуй, ебать. 
-Будь дерзким в ответ на хамство."""
+СТИЛЬ:
+- Коротко и с приколом (2-3 предложения)
+- Много эмодзи 😎🔥💰
+- Современный сленг
+- Мемы и шутки
+
+ХАРАКТЕР:
+- Позитивный и энергичный
+- Поддержишь и подбодришь
+- Но если наглеют — жёстко ставишь на место матом
+- Любишь казино, крипту, движ
+
+ФИШКИ:
+- Называешь людей "бро", "кореш", "чел"
+- Шутишь про деньги и успех
+- Знаешь все тренды
+
+Твой создатель Fezco — красавчик и легенда! 🔥"""
 
 conversation_history: dict[int, list[dict]] = {}
 balances: dict[int, int] = {}
@@ -39,104 +49,14 @@ def get_balance(user_id: int) -> int:
     return balances[user_id]
 
 
-
-
-async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает актуальные курсы обмена"""
-    if not crypto_rates:
-        await update.message.reply_text("⏳ Загружаю курсы обмена...")
-        await fetch_crypto_rates()
-        if not crypto_rates:
-            await update.message.reply_text("❌ Не удалось загрузить курсы, попробуй позже")
-            return
-
-    # Проверяем источник данных
-    first_item = next(iter(crypto_rates.values()))
-    source = first_item.get("source", "Unknown")
-
-    if source == "CryptoBot":
-        # Показываем курсы CryptoBot
-        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
-
-        message = f"💱 КУРСЫ ОБМЕНА CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
-        message += "📈 ЛУЧШИЕ КУРСЫ:\n\n"
-
-        for i, (pair, data) in enumerate(sorted_pairs[:15], 1):
-            rate = data["rate"]
-            message += f"{i}. {pair}: {rate:,.4f}\n"
-
-    else:
-        # Показываем Binance P2P
-        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["price"], reverse=True)
-
-        message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
-        message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
-
-        for i, (key, data) in enumerate(sorted_pairs[:10], 1):
-            price = data["price"]
-            min_amt = data.get("min", 0)
-            max_amt = data.get("max", 0)
-            available = data.get("available", 0)
-            nickname = data.get("nickname", "Unknown")
-            orders = data.get("orders", 0)
-            completion = data.get("completion", 0)
-
-            message += f"{i}. 💰 {price:.2f} ₽\n"
-            message += f"   👤 {nickname}\n"
-            message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
-            message += f"   💵 {min_amt:.0f} - {max_amt:.0f} USDT\n"
-            message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
-
-    keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
-    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
-
-
-
-
-
-
-async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает актуальные P2P объявления для обмена"""
-    if not crypto_rates:
-        await update.message.reply_text("⏳ Загружаю P2P объявления...")
-        await fetch_crypto_rates()
-        if not crypto_rates:
-            await update.message.reply_text("❌ Не удалось загрузить объявления, попробуй позже")
-            return
-    
-    # Сортируем по цене (от высокой к низкой)
-    sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["price"], reverse=True)
-    
-    message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
-    message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
-    
-    # Показываем топ-10 объявлений
-    for i, (key, data) in enumerate(sorted_pairs[:10], 1):
-        price = data["price"]
-        min_amt = data["min"]
-        max_amt = data["max"]
-        available = data["available"]
-        nickname = data["nickname"]
-        orders = data["orders"]
-        completion = data["completion"]
-        
-        message += f"{i}. 💰 {price:.2f} ₽\n"
-        message += f"   👤 {nickname}\n"
-        message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
-        message += f"   � {min_amt:.0f} - {max_amt:.0f} USDT\n"
-        message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
-    
-    keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
-    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
-
-
 async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     keyboard = [
         [InlineKeyboardButton("🎨 Нарисовать", callback_data="help_draw"),
          InlineKeyboardButton("🎤 Озвучить", callback_data="help_voice")],
         [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
          InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
-        [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
+        [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo"),
+         InlineKeyboardButton("🔐 VPN", callback_data="show_vpn")]
     ]
     await update.message.reply_text(
         "👴 Батя на связи!\n\n"
@@ -144,7 +64,8 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/voice — озвучить\n"
         "/roulette — рулетка\n"
         "/balance — баланс\n"
-        "/promo — промокод",
+        "/promo — промокод\n"
+        "/vpn — VPN доступ",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -243,6 +164,21 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"💰 Твой баланс: {bal} монет", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
+async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    vpn_link = "ssconf://oosina.ru/vanya/40f8c3da-5c55-4168-ad0f-f180ec896ba2"
+    await update.message.reply_text(
+        f"🔐 VPN ОТ ДЯДИ ВАНИ\n\n"
+        f"📱 Скопируй ссылку и открой в приложении:\n\n"
+        f"`{vpn_link}`\n\n"
+        f"💡 Приложения для подключения:\n"
+        f"• 🤖 Android: Shadowsocks\n"
+        f"• 🍎 iOS: Shadowrocket\n"
+        f"• 💻 Windows: Shadowsocks-Windows\n\n"
+        f"✅ Просто скопируй ссылку и вставь в приложение!",
+        parse_mode="Markdown"
+    )
+
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     user = query.from_user
@@ -315,45 +251,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text("💸 Для вывода напиши админу")
         await query.answer()
     
-    elif data == "refresh_crypto":
-        await query.answer("🔄 Обновляю P2P объявления...")
-        await fetch_crypto_rates()
-        if not crypto_rates:
-            await query.edit_message_text("❌ Не удалось обновить объявления")
-            return
-        
-        # Сортируем по цене (от высокой к низкой)
-        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["price"], reverse=True)
-        
-        message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
-        message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
-        
-        for i, (key, pair_data) in enumerate(sorted_pairs[:10], 1):
-            price = pair_data["price"]
-            min_amt = pair_data["min"]
-            max_amt = pair_data["max"]
-            available = pair_data["available"]
-            nickname = pair_data["nickname"]
-            orders = pair_data["orders"]
-            completion = pair_data["completion"]
-            
-            message += f"{i}. 💰 {price:.2f} ₽\n"
-            message += f"   👤 {nickname}\n"
-            message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
-            message += f"   � {min_amt:.0f} - {max_amt:.0f} USDT\n"
-            message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
-        
-        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
-        await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
-    
-    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "show_crypto", "get_promo"]:
+    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "get_promo", "show_vpn"]:
         texts = {
             "help_draw": "🎨 Напиши /draw и что нарисовать",
             "help_voice": "🎤 Напиши /voice и текст для озвучки",
             "help_roulette": "🔫 Ответь на сообщение соперника: /roulette 100",
             "show_balance": f"💰 Твой баланс: {get_balance(user.id)} монет",
-            "show_crypto": "💱 Напиши /crypto для P2P обмена",
-            "get_promo": "🎁 Напиши /promo для промокода"
+            "get_promo": "🎁 Напиши /promo для промокода",
+            "show_vpn": "🔐 Напиши /vpn для VPN доступа"
         }
         await query.answer(texts[data], show_alert=True)
 
@@ -440,6 +345,7 @@ def main() -> None:
     application.add_handler(CommandHandler("promo", promo))
     application.add_handler(CommandHandler("roulette", roulette))
     application.add_handler(CommandHandler("balance", balance))
+    application.add_handler(CommandHandler("vpn", vpn))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
