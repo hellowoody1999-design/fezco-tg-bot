@@ -81,14 +81,6 @@ async def fetch_crypto_rates() -> None:
         logger.error(f"Ошибка получения курсов CryptoBot: {e}")
 
 
-async def auto_update_rates() -> None:
-    """Фоновое автообновление курсов каждые 5 минут"""
-    while True:
-        try:
-            await asyncio.sleep(300)  # 5 минут
-            await fetch_crypto_rates()
-        except Exception as e:
-            logger.error(f"Ошибка автообновления: {e}")
 
 
 async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -439,10 +431,6 @@ def main() -> None:
     application.add_handler(CommandHandler("crypto", crypto))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    # Запускаем автообновление курсов в фоне
-    application.create_task(auto_update_rates())
-    logger.info("Автообновление курсов запущено (каждые 5 минут)")
     
     logger.info("Бот запущен...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
