@@ -6,6 +6,8 @@ import os
 import logging
 import random
 import asyncio
+import aiohttp
+from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
@@ -30,11 +32,87 @@ SYSTEM_PROMPT = """Ты — умный собеседник. Правила:
 conversation_history: dict[int, list[dict]] = {}
 balances: dict[int, int] = {}
 active_games: dict[int, dict] = {}
+crypto_rates: dict[str, dict] = {}
+last_update_time: str = "Не обновлялось"
 
 def get_balance(user_id: int) -> int:
     if user_id not in balances:
         balances[user_id] = 10
     return balances[user_id]
+
+
+async def fetch_crypto_rates() -> None:
+    """Получает актуальные курсы P2P из CryptoBot Exchange API"""
+    global crypto_rates, last_update_time
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            # CryptoBot Exchange API - публичный эндпоинт
+            async with session.get("https://api.crypt.bot/exchange") as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    rates = {}
+
+                    # Обрабатываем все торговые пары
+                    for pair in data:
+                        base = pair.get("base", "")
+                        quote = pair.get("quote", "")
+                        last_price = float(pair.get("last_price", 0))
+                        volume_24h = float(pair.get("volume_24h_usd", 0))
+
+                        if base and quote and last_price > 0:
+                            pair_name = f"{base}/{quote}"
+                            rates[pair_name] = {
+                                "rate": last_price,
+                                "volume_24h": volume_24h,
+                                "is_valid": True
+                            }
+
+                    crypto_rates = rates
+                    last_update_time = datetime.now().strftime("%H:%M:%S")
+                    logger.info(f"Курсы CryptoBot обновлены: {len(rates)} пар")
+                else:
+                    logger.error(f"HTTP {resp.status} при получении курсов")
+    except Exception as e:
+        logger.error(f"Ошибка получения курсов CryptoBot: {e}")
+
+
+async def update_rates_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Периодическое обновление курсов"""
+    await fetch_crypto_rates()
+
+
+async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает актуальные курсы P2P продажи с сортировкой по цене"""
+    if not crypto_rates:
+        await update.message.reply_text("⏳ Курсы загружаются, попробуй через пару секунд...")
+        return
+    
+    # Сортируем пары по цене (от высокой к низкой)
+    sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
+    
+    message = f"💱 КУРСЫ CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
+    message += "📈 ТОП КУРСЫ:\n\n"
+    
+    # Показываем топ-10 пар с самым высоким курсом
+    for i, (pair, data) in enumerate(sorted_pairs[:10], 1):
+        rate = data["rate"]
+        volume = data.get("volume_24h", 0)
+        
+        # Форматируем объем
+        if volume >= 1000000:
+            volume_str = f"{volume/1000000:.1f}M"
+        elif volume >= 1000:
+            volume_str = f"{volume/1000:.1f}K"
+        else:
+            volume_str = f"{volume:.0f}"
+        
+        message += f"{i}. {pair}\n"
+        message += f"   💰 {rate:,.8f}\n"
+        message += f"   📊 24h: ${volume_str}\n\n"
+    
+    keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
+    await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
 
 
 async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -43,7 +121,8 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
          InlineKeyboardButton("🎤 Озвучить", callback_data="help_voice")],
         [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
          InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
-        [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
+        [InlineKeyboardButton("💱 Курсы P2P", callback_data="show_crypto"),
+         InlineKeyboardButton("🎁 Промокод", callback_data="get_promo")]
     ]
     await update.message.reply_text(
         "👴 Батя на связи!\n\n"
@@ -51,6 +130,7 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/voice — озвучить\n"
         "/roulette — рулетка\n"
         "/balance — баланс\n"
+        "/crypto — курсы CryptoBot\n"
         "/promo — промокод",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -222,12 +302,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.edit_message_text("💸 Для вывода напиши админу")
         await query.answer()
     
-    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "get_promo"]:
+    elif data == "refresh_crypto":
+        await query.answer("🔄 Обновляю курсы...")
+        await fetch_crypto_rates()
+        if not crypto_rates:
+            await query.edit_message_text("❌ Не удалось обновить курсы")
+            return
+        
+        # Сортируем пары по цене (от высокой к низкой)
+        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
+        
+        message = f"💱 КУРСЫ CRYPTOBOT\n🕐 Обновлено: {last_update_time}\n\n"
+        message += "📈 ТОП КУРСЫ:\n\n"
+        
+        for i, (pair, pair_data) in enumerate(sorted_pairs[:10], 1):
+            rate = pair_data["rate"]
+            volume = pair_data.get("volume_24h", 0)
+            
+            if volume >= 1000000:
+                volume_str = f"{volume/1000000:.1f}M"
+            elif volume >= 1000:
+                volume_str = f"{volume/1000:.1f}K"
+            else:
+                volume_str = f"{volume:.0f}"
+            
+            message += f"{i}. {pair}\n"
+            message += f"   💰 {rate:,.8f}\n"
+            message += f"   📊 24h: ${volume_str}\n\n"
+        
+        keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
+        await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
+    
+    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "show_crypto", "get_promo"]:
         texts = {
             "help_draw": "🎨 Напиши /draw и что нарисовать",
             "help_voice": "🎤 Напиши /voice и текст для озвучки",
             "help_roulette": "🔫 Ответь на сообщение соперника: /roulette 100",
             "show_balance": f"💰 Твой баланс: {get_balance(user.id)} монет",
+            "show_crypto": "💱 Напиши /crypto для курсов CryptoBot",
             "get_promo": "🎁 Напиши /promo для промокода"
         }
         await query.answer(texts[data], show_alert=True)
@@ -315,8 +427,13 @@ def main() -> None:
     application.add_handler(CommandHandler("promo", promo))
     application.add_handler(CommandHandler("roulette", roulette))
     application.add_handler(CommandHandler("balance", balance))
+    application.add_handler(CommandHandler("crypto", crypto))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    # Автообновление курсов каждые 5 минут
+    job_queue = application.job_queue
+    job_queue.run_repeating(update_rates_job, interval=300, first=10)
     
     logger.info("Бот запущен...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
