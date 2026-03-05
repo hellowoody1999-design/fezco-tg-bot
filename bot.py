@@ -42,82 +42,106 @@ def get_balance(user_id: int) -> int:
 
 
 async def fetch_crypto_rates() -> None:
-    """Получает актуальные курсы криптовалют"""
+    """Получает актуальные P2P объявления для обмена"""
     global crypto_rates, last_update_time
 
     try:
         async with aiohttp.ClientSession() as session:
-            # Используем публичный API Binance для курсов
-            async with session.get("https://api.binance.com/api/v3/ticker/24hr") as resp:
+            # Binance P2P API для продажи USDT за RUB (самые выгодные курсы)
+            payload = {
+                "asset": "USDT",
+                "fiat": "RUB",
+                "merchantCheck": False,
+                "page": 1,
+                "payTypes": [],
+                "publisherType": None,
+                "rows": 20,
+                "tradeType": "SELL"  # Продажа USDT (покупка за рубли)
+            }
+
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0"
+            }
+
+            async with session.post(
+                "https://p2p.binance.com/bapi/c2c/v2/friendly/c2c/adv/search",
+                json=payload,
+                headers=headers
+            ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     rates = {}
 
-                    # Обрабатываем популярные пары
-                    for ticker in data:
-                        symbol = ticker.get("symbol", "")
-                        price = float(ticker.get("lastPrice", 0))
-                        volume = float(ticker.get("quoteVolume", 0))
-                        
-                        # Форматируем название пары (BTCUSDT -> BTC/USDT)
-                        if symbol.endswith("USDT"):
-                            base = symbol[:-4]
-                            pair_name = f"{base}/USDT"
-                        elif symbol.endswith("BTC"):
-                            base = symbol[:-3]
-                            pair_name = f"{base}/BTC"
-                        else:
-                            continue
-                        
-                        if price > 0:
-                            rates[pair_name] = {
-                                "rate": price,
-                                "volume_24h": volume,
-                                "is_valid": True
+                    if data.get("data"):
+                        ads = data["data"]
+
+                        # Сортируем по цене (от высокой к низкой - выгоднее продавать)
+                        sorted_ads = sorted(ads, key=lambda x: float(x["adv"]["price"]), reverse=True)
+
+                        for i, ad in enumerate(sorted_ads[:10], 1):  # Топ-10 самых выгодных
+                            adv = ad["adv"]
+                            advertiser = ad["advertiser"]
+
+                            price = float(adv["price"])
+                            min_amount = float(adv["minSingleTransAmount"])
+                            max_amount = float(adv["dynamicMaxSingleTransAmount"])
+                            available = float(adv["surplusAmount"])
+
+                            rates[f"P2P_{i}"] = {
+                                "price": price,
+                                "min": min_amount,
+                                "max": max_amount,
+                                "available": available,
+                                "nickname": advertiser.get("nickName", "Unknown"),
+                                "orders": advertiser.get("monthOrderCount", 0),
+                                "completion": advertiser.get("monthFinishRate", 0),
+                                "rate": price  # Для сортировки
                             }
 
-                    crypto_rates = rates
-                    last_update_time = datetime.now().strftime("%H:%M:%S")
-                    logger.info(f"Курсы обновлены: {len(rates)} пар")
+                        crypto_rates = rates
+                        last_update_time = datetime.now().strftime("%H:%M:%S")
+                        logger.info(f"P2P объявления обновлены: {len(rates)} продавцов")
+                    else:
+                        logger.error("Нет данных P2P")
                 else:
-                    logger.error(f"HTTP {resp.status} при получении курсов")
+                    logger.error(f"HTTP {resp.status} при получении P2P")
     except Exception as e:
-        logger.error(f"Ошибка получения курсов: {e}")
+        logger.error(f"Ошибка получения P2P: {e}")
 
 
 
 
 async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Показывает актуальные курсы криптовалют с сортировкой по цене"""
+    """Показывает актуальные P2P объявления для обмена"""
     if not crypto_rates:
-        await update.message.reply_text("⏳ Загружаю курсы...")
+        await update.message.reply_text("⏳ Загружаю P2P объявления...")
         await fetch_crypto_rates()
         if not crypto_rates:
-            await update.message.reply_text("❌ Не удалось загрузить курсы, попробуй позже")
+            await update.message.reply_text("❌ Не удалось загрузить объявления, попробуй позже")
             return
     
-    # Сортируем пары по цене (от высокой к низкой)
-    sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
+    # Сортируем по цене (от высокой к низкой)
+    sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["price"], reverse=True)
     
-    message = f"💱 КУРСЫ КРИПТОВАЛЮТ\n🕐 Обновлено: {last_update_time}\n\n"
-    message += "📈 ТОП КУРСЫ:\n\n"
+    message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
+    message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
     
-    # Показываем топ-10 пар с самым высоким курсом
-    for i, (pair, data) in enumerate(sorted_pairs[:10], 1):
-        rate = data["rate"]
-        volume = data.get("volume_24h", 0)
+    # Показываем топ-10 объявлений
+    for i, (key, data) in enumerate(sorted_pairs[:10], 1):
+        price = data["price"]
+        min_amt = data["min"]
+        max_amt = data["max"]
+        available = data["available"]
+        nickname = data["nickname"]
+        orders = data["orders"]
+        completion = data["completion"]
         
-        # Форматируем объем
-        if volume >= 1000000:
-            volume_str = f"{volume/1000000:.1f}M"
-        elif volume >= 1000:
-            volume_str = f"{volume/1000:.1f}K"
-        else:
-            volume_str = f"{volume:.0f}"
-        
-        message += f"{i}. {pair}\n"
-        message += f"   💰 {rate:,.8f}\n"
-        message += f"   📊 24h: ${volume_str}\n\n"
+        message += f"{i}. 💰 {price:.2f} ₽\n"
+        message += f"   👤 {nickname}\n"
+        message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
+        message += f"   � {min_amt:.0f} - {max_amt:.0f} USDT\n"
+        message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
     
     keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
     await update.message.reply_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -138,7 +162,7 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/voice — озвучить\n"
         "/roulette — рулетка\n"
         "/balance — баланс\n"
-        "/crypto — курсы крипты\n"
+        "/crypto — P2P обмен\n"
         "/promo — промокод",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -311,32 +335,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await query.answer()
     
     elif data == "refresh_crypto":
-        await query.answer("🔄 Обновляю курсы...")
+        await query.answer("🔄 Обновляю P2P объявления...")
         await fetch_crypto_rates()
         if not crypto_rates:
-            await query.edit_message_text("❌ Не удалось обновить курсы")
+            await query.edit_message_text("❌ Не удалось обновить объявления")
             return
         
-        # Сортируем пары по цене (от высокой к низкой)
-        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["rate"], reverse=True)
+        # Сортируем по цене (от высокой к низкой)
+        sorted_pairs = sorted(crypto_rates.items(), key=lambda x: x[1]["price"], reverse=True)
         
-        message = f"💱 КУРСЫ КРИПТОВАЛЮТ\n🕐 Обновлено: {last_update_time}\n\n"
-        message += "📈 ТОП КУРСЫ:\n\n"
+        message = f"💱 P2P ОБМЕН USDT → RUB\n🕐 Обновлено: {last_update_time}\n\n"
+        message += "📈 ЛУЧШИЕ КУРСЫ (ПРОДАЖА):\n\n"
         
-        for i, (pair, pair_data) in enumerate(sorted_pairs[:10], 1):
-            rate = pair_data["rate"]
-            volume = pair_data.get("volume_24h", 0)
+        for i, (key, pair_data) in enumerate(sorted_pairs[:10], 1):
+            price = pair_data["price"]
+            min_amt = pair_data["min"]
+            max_amt = pair_data["max"]
+            available = pair_data["available"]
+            nickname = pair_data["nickname"]
+            orders = pair_data["orders"]
+            completion = pair_data["completion"]
             
-            if volume >= 1000000:
-                volume_str = f"{volume/1000000:.1f}M"
-            elif volume >= 1000:
-                volume_str = f"{volume/1000:.1f}K"
-            else:
-                volume_str = f"{volume:.0f}"
-            
-            message += f"{i}. {pair}\n"
-            message += f"   💰 {rate:,.8f}\n"
-            message += f"   📊 24h: ${volume_str}\n\n"
+            message += f"{i}. 💰 {price:.2f} ₽\n"
+            message += f"   👤 {nickname}\n"
+            message += f"   📊 {orders} сделок | {completion*100:.0f}% успех\n"
+            message += f"   � {min_amt:.0f} - {max_amt:.0f} USDT\n"
+            message += f"   ✅ Доступно: {available:.0f} USDT\n\n"
         
         keyboard = [[InlineKeyboardButton("🔄 Обновить", callback_data="refresh_crypto")]]
         await query.edit_message_text(message, reply_markup=InlineKeyboardMarkup(keyboard))
@@ -347,7 +371,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "help_voice": "🎤 Напиши /voice и текст для озвучки",
             "help_roulette": "🔫 Ответь на сообщение соперника: /roulette 100",
             "show_balance": f"💰 Твой баланс: {get_balance(user.id)} монет",
-            "show_crypto": "💱 Напиши /crypto для курсов крипты",
+            "show_crypto": "💱 Напиши /crypto для P2P обмена",
             "get_promo": "🎁 Напиши /promo для промокода"
         }
         await query.answer(texts[data], show_alert=True)
