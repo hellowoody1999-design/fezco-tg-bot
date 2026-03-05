@@ -77,9 +77,14 @@ async def fetch_crypto_rates() -> None:
         logger.error(f"Ошибка получения курсов CryptoBot: {e}")
 
 
-async def update_rates_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Периодическое обновление курсов"""
-    await fetch_crypto_rates()
+async def auto_update_rates() -> None:
+    """Фоновое автообновление курсов каждые 5 минут"""
+    while True:
+        try:
+            await asyncio.sleep(300)  # 5 минут
+            await fetch_crypto_rates()
+        except Exception as e:
+            logger.error(f"Ошибка автообновления: {e}")
 
 
 async def crypto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -412,7 +417,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("Техническая заминка. Попробуй ещё раз.")
 
 
-def main() -> None:
+async def main() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN не установлен")
@@ -431,17 +436,16 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    # Автообновление курсов каждые 5 минут
-    job_queue = application.job_queue
-    if job_queue:
-        job_queue.run_repeating(update_rates_job, interval=300, first=10)
-        logger.info("Автообновление курсов включено (каждые 5 минут)")
-    else:
-        logger.warning("JobQueue недоступен, автообновление отключено")
+    # Запускаем автообновление курсов в фоне
+    asyncio.create_task(auto_update_rates())
+    logger.info("Автообновление курсов запущено (каждые 5 минут)")
+    
+    # Первое обновление сразу
+    await fetch_crypto_rates()
     
     logger.info("Бот запущен...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    await application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
