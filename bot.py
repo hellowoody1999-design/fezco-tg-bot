@@ -57,8 +57,7 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         [InlineKeyboardButton("🔫 Рулетка", callback_data="help_roulette"),
          InlineKeyboardButton("💰 Баланс", callback_data="show_balance")],
         [InlineKeyboardButton("🎁 Промокод", callback_data="get_promo"),
-         InlineKeyboardButton("🔐 VPN", callback_data="show_vpn")],
-        [InlineKeyboardButton("💻 RDP", callback_data="show_rdp")]
+         InlineKeyboardButton("💻 RDP", callback_data="show_rdp")]
     ]
     await update.message.reply_text(
         "👴 Батя на связи!\n\n"
@@ -67,7 +66,6 @@ async def batya(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/roulette — рулетка\n"
         "/balance — баланс\n"
         "/promo — промокод\n"
-        "/vpn — VPN доступ\n"
         "/rdp — RDP сервера",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
@@ -167,33 +165,6 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(f"💰 Твой баланс: {bal} монет", reply_markup=InlineKeyboardMarkup(keyboard))
 
 
-async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    config = """[Interface]
-PrivateKey = kKg10Bqwc3jfpoKIqdkVsqttoBoGS2sMnJxljjgaAHw=
-Address = 10.0.0.2/24
-DNS = 8.8.8.8
-
-[Peer]
-PublicKey = i1UUKaJp+0C3ZP0SPS8No3E/Yaiiiu6H1CcZCcg2f1o=
-Endpoint = 109.61.108.99:51820
-AllowedIPs = 0.0.0.0/0
-PersistentKeepalive = 25"""
-    
-    await update.message.reply_text(
-        "🔐 VPN WIREGUARD\n\n"
-        "📱 Скопируй конфиг:\n\n"
-        f"`{config}`\n\n"
-        "💡 Как подключиться:\n"
-        "1. Установи WireGuard\n"
-        "2. Создай новый туннель\n"
-        "3. Вставь конфиг выше\n"
-        "4. Подключись\n\n"
-        "📲 Приложения:\n"
-        "• 🤖 Android: WireGuard\n"
-        "• 🍎 iOS: WireGuard\n"
-        "• 💻 Windows/Mac: WireGuard",
-        parse_mode="Markdown"
-    )
 
 
 async def rdp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -390,14 +361,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "• Срок аренды"
         )
     
-    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "get_promo", "show_vpn", "show_rdp"]:
+    elif data in ["help_draw", "help_voice", "help_roulette", "show_balance", "get_promo", "show_rdp"]:
         texts = {
             "help_draw": "🎨 Напиши /draw и что нарисовать",
             "help_voice": "🎤 Напиши /voice и текст для озвучки",
             "help_roulette": "🔫 Ответь на сообщение соперника: /roulette 100",
             "show_balance": f"💰 Твой баланс: {get_balance(user.id)} монет",
             "get_promo": "🎁 Напиши /promo для промокода",
-            "show_vpn": "🔐 Напиши /vpn для VPN доступа",
             "show_rdp": "💻 Напиши /rdp для RDP серверов"
         }
         await query.answer(texts[data], show_alert=True)
@@ -485,7 +455,6 @@ def main() -> None:
     application.add_handler(CommandHandler("promo", promo))
     application.add_handler(CommandHandler("roulette", roulette))
     application.add_handler(CommandHandler("balance", balance))
-    application.add_handler(CommandHandler("vpn", vpn))
     application.add_handler(CommandHandler("rdp", rdp))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
