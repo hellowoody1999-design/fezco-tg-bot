@@ -168,13 +168,31 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    config = """[Interface]
+PrivateKey = kKg10Bqwc3jfpoKIqdkVsqttoBoGS2sMnJxljjgaAHw=
+Address = 10.0.0.2/24
+DNS = 8.8.8.8
+
+[Peer]
+PublicKey = i1UUKaJp+0C3ZP0SPS8No3E/Yaiiiu6H1CcZCcg2f1o=
+Endpoint = 109.61.108.99:51820
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25"""
+    
     await update.message.reply_text(
-        "🔐 VPN СКОРО БУДЕТ ДОСТУПЕН!\n\n"
-        "⏳ Настраиваем сервер...\n\n"
-        "Пока можешь использовать:\n"
-        "💻 /rdp - RDP сервера\n"
-        "🎨 /draw - генерация картинок\n"
-        "🎤 /voice - озвучка текста"
+        "🔐 VPN WIREGUARD\n\n"
+        "📱 Скопируй конфиг:\n\n"
+        f"`{config}`\n\n"
+        "💡 Как подключиться:\n"
+        "1. Установи WireGuard\n"
+        "2. Создай новый туннель\n"
+        "3. Вставь конфиг выше\n"
+        "4. Подключись\n\n"
+        "📲 Приложения:\n"
+        "• 🤖 Android: WireGuard\n"
+        "• 🍎 iOS: WireGuard\n"
+        "• 💻 Windows/Mac: WireGuard",
+        parse_mode="Markdown"
     )
 
 
