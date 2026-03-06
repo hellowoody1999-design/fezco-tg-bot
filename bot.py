@@ -169,20 +169,12 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def vpn(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
-        "🔐 VPN ДОСТУП\n\n"
-        "🌐 Панель управления:\n"
-        "http://109.61.108.99:42311/BqXkFnZgIRjYhUwQvE/\n\n"
-        "👤 Логин: admin\n"
-        "🔑 Пароль: admin123\n\n"
-        "📱 Создай свой ключ в панели:\n"
-        "1. Открой панель\n"
-        "2. Перейди в Inbounds\n"
-        "3. Нажми на иконку QR-кода\n"
-        "4. Скопируй ссылку или отсканируй QR\n\n"
-        "💡 Приложения:\n"
-        "• 🤖 Android: v2rayNG\n"
-        "• 🍎 iOS: Shadowrocket\n"
-        "• 💻 Windows: v2rayN"
+        "🔐 VPN СКОРО БУДЕТ ДОСТУПЕН!\n\n"
+        "⏳ Настраиваем сервер...\n\n"
+        "Пока можешь использовать:\n"
+        "💻 /rdp - RDP сервера\n"
+        "🎨 /draw - генерация картинок\n"
+        "🎤 /voice - озвучка текста"
     )
 
 
