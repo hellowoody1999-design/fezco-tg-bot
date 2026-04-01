@@ -397,7 +397,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ("mellstroy", "мелстрой"): ("🌟 Mellstroy", "https://golnk.ru/QwWYB"),
         ("stake", "стейк"): ("🥩 STAKE", "https://stakerus.com/"),
         ("1win", "1вин", "ванвин"): ("😂 1WIN", "https://1vvswify.com/?open=register&p=ol84"),
-        ("ezcash", "изикеш", "езкеш", "изик"): ("🦈 EZCASH", "https://ezcash.bar/"),
+        ("ezcash", "изикеш", "езкеш", "изик"): ("🦈 EZCASH", "https://ezcash.sbs/"),
         ("dragon", "драгон", "дракон"): ("🐲 DRAGON", "https://dg1.to/fyvfuwqoc"),
         ("kent", "кент"): ("🤫 KENT", "https://mealmenalc.com/d96995d83"),
         ("cat", "кэт", "кет"): ("💅 CAT", "https://catchthecatthree.com/dcb903109"),
