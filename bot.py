@@ -20,7 +20,11 @@ load_dotenv(dotenv_path=env_path)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# Используем DeepSeek API (бесплатная альтернатива OpenAI)
+client = OpenAI(
+    api_key=os.getenv("DEEPSEEK_API_KEY", "sk-dummy"),  # Fallback на dummy key
+    base_url="https://api.deepseek.com"
+)
 
 SYSTEM_PROMPT = """Ты — Батя, весёлый AI-пацан, который всегда в теме.
 
@@ -81,35 +85,13 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args:
-        await update.message.reply_text("Напиши что нарисовать: /draw котик в космосе")
-        return
-    prompt = " ".join(context.args)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
-    try:
-        response = client.images.generate(model="dall-e-3", prompt=prompt, size="1024x1024", quality="standard", n=1)
-        await update.message.reply_photo(photo=response.data[0].url, caption=f"🎨 {prompt}")
-    except Exception as e:
-        logger.error(f"Ошибка DALL-E: {e}")
-        await update.message.reply_text("Не получилось нарисовать, попробуй другой запрос.")
+    await update.message.reply_text("🎨 Генерация изображений временно недоступна (требует платный API)")
+    return
 
 
 async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if not context.args:
-        await update.message.reply_text("Напиши что озвучить: /voice Привет, как дела?")
-        return
-    text = " ".join(context.args)
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="record_voice")
-    try:
-        response = client.audio.speech.create(model="tts-1", voice="onyx", input=text)
-        audio_path = f"/tmp/voice_{update.effective_user.id}.mp3"
-        response.stream_to_file(audio_path)
-        with open(audio_path, "rb") as audio:
-            await update.message.reply_voice(voice=audio)
-        os.remove(audio_path)
-    except Exception as e:
-        logger.error(f"Ошибка TTS: {e}")
-        await update.message.reply_text("Не получилось озвучить.")
+    await update.message.reply_text("🎤 Озвучка временно недоступна (требует платный API)")
+    return
 
 
 async def promo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -434,7 +416,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(conversation_history[user_id])
-        response = client.chat.completions.create(model="gpt-4o-mini", messages=messages, max_tokens=300, temperature=0.8)
+        response = client.chat.completions.create(
+            model="deepseek-chat",  # Бесплатная модель DeepSeek
+            messages=messages,
+            max_tokens=300,
+            temperature=0.8
+        )
         assistant_message = response.choices[0].message.content
         conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
         await update.message.reply_text(assistant_message)
@@ -447,8 +434,6 @@ def main() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN не установлен")
-    if not os.getenv("OPENAI_API_KEY"):
-        raise ValueError("OPENAI_API_KEY не установлен")
     
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("batya", batya))
