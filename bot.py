@@ -104,46 +104,56 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("История очищена! ✨")
 
 
+async def _openai_images_http(prompt: str, model: str = "gpt-image-1-mini") -> bytes:
+    """Прямой HTTP к OpenAI Images API — стабильнее SDK на кривых хостингах."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY не установлен")
+
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "size": "1024x1024",
+        "quality": "low",
+        "n": 1,
+    }
+    timeout = aiohttp.ClientTimeout(total=180, connect=30, sock_read=150)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            "https://api.openai.com/v1/images/generations",
+            headers=headers,
+            json=payload,
+        ) as resp:
+            raw = await resp.read()
+            text = raw.decode("utf-8", errors="replace")
+            if resp.status >= 400:
+                raise RuntimeError(f"OpenAI HTTP {resp.status}: {text[:400]}")
+            import json as _json
+            data = _json.loads(text)
+            item = data["data"][0]
+            if item.get("b64_json"):
+                return base64.b64decode(item["b64_json"])
+            if item.get("url"):
+                async with session.get(item["url"]) as img_resp:
+                    img_resp.raise_for_status()
+                    return await img_resp.read()
+            raise ValueError("OpenAI не вернул изображение")
+
+
 async def _generate_image_bytes(prompt: str) -> bytes:
-    """Generate image bytes via OpenAI, with model fallback and retries."""
-    client = get_image_client()
-    # mini first: faster/cheaper; fewer connection timeouts on weak hosts
+    """Generate image bytes via OpenAI HTTP, with model fallback and retries."""
     models = ["gpt-image-1-mini", "gpt-image-1"]
     last_error: Exception | None = None
 
     for model in models:
         for attempt in range(3):
             try:
-                def _call(m=model):
-                    try:
-                        return client.images.generate(
-                            model=m,
-                            prompt=prompt,
-                            size="1024x1024",
-                            quality="low",
-                            n=1,
-                        )
-                    except Exception as e:
-                        msg = str(e).lower()
-                        if "quality" in msg or "unexpected" in msg or "unknown" in msg:
-                            return client.images.generate(
-                                model=m,
-                                prompt=prompt,
-                                size="1024x1024",
-                                n=1,
-                            )
-                        raise
-
-                response = await asyncio.to_thread(_call)
-                item = response.data[0]
-                if getattr(item, "b64_json", None):
-                    return base64.b64decode(item.b64_json)
-                if getattr(item, "url", None):
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(item.url) as resp:
-                            resp.raise_for_status()
-                            return await resp.read()
-                raise ValueError("OpenAI не вернул изображение")
+                return await _openai_images_http(prompt, model=model)
             except Exception as e:
                 last_error = e
                 msg = str(e).lower()
@@ -151,16 +161,41 @@ async def _generate_image_bytes(prompt: str) -> bytes:
                     raise
                 if "verified" in msg or "verify organization" in msg:
                     raise
-                logger.warning(f"Image gen failed model={model} attempt={attempt + 1}: {e}")
-                # connection/network — wait longer before retry
+                logger.warning(f"Image HTTP failed model={model} attempt={attempt + 1}: {e}")
                 if "connection" in msg or "connect" in msg or "timed out" in msg or "timeout" in msg:
                     await asyncio.sleep(3 * (attempt + 1))
                 else:
-                    await asyncio.sleep(1.2 * (attempt + 1))
-                if "does not exist" in msg or "invalid_value" in msg or ("model" in msg and "not" in msg):
+                    await asyncio.sleep(1.5 * (attempt + 1))
+                if "does not exist" in msg or "invalid_value" in msg or "model_not_found" in msg:
                     break
                 if "403" in msg or "permission" in msg:
                     break
+
+    # last resort: OpenAI SDK client
+    try:
+        client = get_image_client()
+
+        def _sdk_call():
+            return client.images.generate(
+                model="gpt-image-1-mini",
+                prompt=prompt,
+                size="1024x1024",
+                quality="low",
+                n=1,
+            )
+
+        response = await asyncio.to_thread(_sdk_call)
+        item = response.data[0]
+        if getattr(item, "b64_json", None):
+            return base64.b64decode(item.b64_json)
+        if getattr(item, "url", None):
+            async with aiohttp.ClientSession() as session:
+                async with session.get(item.url) as resp:
+                    resp.raise_for_status()
+                    return await resp.read()
+    except Exception as e:
+        last_error = e
+        logger.warning(f"Image SDK fallback failed: {e}")
 
     raise last_error or RuntimeError("Не удалось сгенерировать изображение")
 
