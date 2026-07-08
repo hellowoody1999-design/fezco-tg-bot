@@ -23,6 +23,7 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 _client: OpenAI | None = None
+_image_client: OpenAI | None = None
 
 
 def get_openai_client() -> OpenAI:
@@ -31,8 +32,24 @@ def get_openai_client() -> OpenAI:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY не установлен")
-        _client = OpenAI(api_key=api_key, timeout=60.0)
+        _client = OpenAI(api_key=api_key, timeout=60.0, max_retries=2)
     return _client
+
+
+def get_image_client() -> OpenAI:
+    """Отдельный клиент для картинок: дольше ждём, больше ретраев."""
+    global _image_client
+    if _image_client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY не установлен")
+        try:
+            import httpx
+            timeout = httpx.Timeout(180.0, connect=30.0)
+        except Exception:
+            timeout = 180.0
+        _image_client = OpenAI(api_key=api_key, timeout=timeout, max_retries=3)
+    return _image_client
 
 SYSTEM_PROMPT = """Ты — Батя, AI-помощник в Telegram.
 
@@ -89,13 +106,13 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _generate_image_bytes(prompt: str) -> bytes:
     """Generate image bytes via OpenAI, with model fallback and retries."""
-    client = get_openai_client()
-    # mini first: faster/cheaper and works without org verification
-    models = ["gpt-image-1-mini", "gpt-image-1", "gpt-image-1.5"]
+    client = get_image_client()
+    # mini first: faster/cheaper; fewer connection timeouts on weak hosts
+    models = ["gpt-image-1-mini", "gpt-image-1"]
     last_error: Exception | None = None
 
     for model in models:
-        for attempt in range(2):
+        for attempt in range(3):
             try:
                 def _call(m=model):
                     try:
@@ -107,7 +124,6 @@ async def _generate_image_bytes(prompt: str) -> bytes:
                             n=1,
                         )
                     except Exception as e:
-                        # quality not supported on some models/SDK versions
                         msg = str(e).lower()
                         if "quality" in msg or "unexpected" in msg or "unknown" in msg:
                             return client.images.generate(
@@ -136,7 +152,11 @@ async def _generate_image_bytes(prompt: str) -> bytes:
                 if "verified" in msg or "verify organization" in msg:
                     raise
                 logger.warning(f"Image gen failed model={model} attempt={attempt + 1}: {e}")
-                await asyncio.sleep(1.2 * (attempt + 1))
+                # connection/network — wait longer before retry
+                if "connection" in msg or "connect" in msg or "timed out" in msg or "timeout" in msg:
+                    await asyncio.sleep(3 * (attempt + 1))
+                else:
+                    await asyncio.sleep(1.2 * (attempt + 1))
                 if "does not exist" in msg or "invalid_value" in msg or ("model" in msg and "not" in msg):
                     break
                 if "403" in msg or "permission" in msg:
@@ -168,8 +188,18 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Напиши что нарисовать: /draw котик в космосе")
         return
     prompt = " ".join(context.args)
-    status = await update.message.reply_text("🎨 Рисую... подожди 10-30 сек")
+    status = await update.message.reply_text("🎨 Рисую... подожди до 1–2 мин")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
+    # keep typing/upload indicator while waiting on OpenAI
+    async def _keepalive():
+        while True:
+            try:
+                await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
+            except Exception:
+                pass
+            await asyncio.sleep(4)
+
+    keep = asyncio.create_task(_keepalive())
     try:
         image_bytes = await _generate_image_bytes(prompt)
         photo = _to_telegram_photo(image_bytes)
@@ -192,6 +222,12 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             text = "🚫 OpenAI отклонил запрос по правилам. Попробуй другую формулировку."
         elif "verified" in err_l or "verify organization" in err_l:
             text = "🔐 Нужна верификация организации OpenAI: platform.openai.com → Settings → Organization → Verify"
+        elif "connection" in err_l or "connect" in err_l or "name or service not known" in err_l:
+            text = (
+                "🌐 Сервер не достучался до OpenAI (Connection error).\n"
+                "Обычно это сеть хостинга/файрвол. Чат может работать, а картинки — нет.\n"
+                "Попробуй ещё раз или смени регион/сеть деплоя."
+            )
         elif "520" in err or "502" in err or "503" in err or "retryable" in err_l or "timeout" in err_l:
             text = "⏳ OpenAI сейчас тупит (временный сбой). Попробуй ещё раз через минуту."
         elif "billing" in err_l or "quota" in err_l or "insufficient" in err_l or "429" in err:
@@ -207,6 +243,12 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await status.edit_text(text)
         except Exception:
             await update.message.reply_text(text)
+    finally:
+        keep.cancel()
+        try:
+            await keep
+        except Exception:
+            pass
 
 
 async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
