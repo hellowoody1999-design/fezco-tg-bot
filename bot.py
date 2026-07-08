@@ -67,6 +67,113 @@ SYSTEM_PROMPT = """Ты — Батя, AI-помощник в Telegram.
 - Если наглеют — можешь жёстче
 - Создатель: Fezco 🔥"""
 
+CASINOS = [
+    {
+        "triggers": ("ezcash", "изикеш", "езкеш", "изик"),
+        "name": "🦈 EZCASH",
+        "link": "https://ezcash-mirror.com/",
+        "about": (
+            "EZCASH — онлайн-казино: 3000+ слотов, live, краш-игры, спорт. "
+            "Бонус новичкам, вывод от 15 мин, мобилка без приложения. "
+            "Рабочее зеркало: ezcash-mirror.com 🦈"
+        ),
+    },
+    {
+        "triggers": ("dragon", "драгон", "дракон"),
+        "name": "🐲 DRAGON",
+        "link": "https://dg1.to/fyvfuwqoc",
+        "about": "DRAGON Casino — слоты, live и бонусы. Официальный вход по ссылке ниже 🐲",
+    },
+    {
+        "triggers": ("cabura", "кабура"),
+        "name": "🎰 CABURA",
+        "link": "https://cabura-mirror.com/",
+        "about": "CABURA — казино со слотами, live, Mines, Crash, Plinko. Зеркало: cabura-mirror.com 🎰",
+    },
+    {
+        "triggers": ("wilder", "вайлдер"),
+        "name": "🐺 WILDER",
+        "link": "https://wilder-casino.com/",
+        "about": "WILDER Casino — слоты, бонусы, промокоды. Официальный сайт: wilder-casino.com 🐺",
+    },
+    {
+        "triggers": ("bitzamo", "битзамо"),
+        "name": "💎 BITZAMO",
+        "link": "https://bitzamo-mirror.com/",
+        "about": "BITZAMO — онлайн-казино. Рабочее зеркало: bitzamo-mirror.com 💎",
+    },
+    {
+        "triggers": ("selector", "селектор"),
+        "name": "🎯 SELECTOR",
+        "link": "https://selector-mirror.com/",
+        "about": "SELECTOR Casino — зеркало: selector-mirror.com 🎯",
+    },
+    {
+        "triggers": ("friends", "френдс", "френдз"),
+        "name": "👥 FRIENDS",
+        "link": "https://friends-mirror.com/",
+        "about": "FRIENDS Casino — зеркало: friends-mirror.com 👥",
+    },
+    {
+        "triggers": ("turbo", "турбо"),
+        "name": "⚡ TURBO",
+        "link": "https://turbo-mirror.com/",
+        "about": "TURBO Casino — зеркало: turbo-mirror.com ⚡",
+    },
+    {
+        "triggers": ("brillx", "бриллкс"),
+        "name": "✨ BRILLX",
+        "link": "https://brillx-mirror.com/",
+        "about": "BRILLX Casino — зеркало: brillx-mirror.com ✨",
+    },
+    {
+        "triggers": ("blitz", "блиц"),
+        "name": "🔥 BLITZ",
+        "link": "https://blitz-mirror.com/",
+        "about": "BLITZ Casino — зеркало: blitz-mirror.com 🔥",
+    },
+]
+
+
+def _find_casino(message_lower: str) -> dict | None:
+    for casino in CASINOS:
+        if any(trigger in message_lower for trigger in casino["triggers"]):
+            return casino
+    return None
+
+
+async def _openai_chat_http(messages: list[dict]) -> str:
+    """Прямой HTTP к OpenAI Chat — стабильнее SDK на кривых хостингах."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY не установлен")
+
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": messages,
+        "max_tokens": 700,
+        "temperature": 0.7,
+    }
+    timeout = aiohttp.ClientTimeout(total=90, connect=20, sock_read=60)
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+        ) as resp:
+            raw = await resp.read()
+            text = raw.decode("utf-8", errors="replace")
+            if resp.status >= 400:
+                raise RuntimeError(f"OpenAI HTTP {resp.status}: {text[:400]}")
+            import json as _json
+            data = _json.loads(text)
+            return data["choices"][0]["message"]["content"]
+
 conversation_history: dict[int, list[dict]] = {}
 balances: dict[int, int] = {}
 active_games: dict[int, dict] = {}
@@ -596,33 +703,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         is_reply_to_bot = True
         is_mentioned = True
 
-    casinos = {
-        ("ezcash", "изикеш", "езкеш", "изик"): ("🦈 EZCASH", "https://ezcash-mirror.com/"),
-        ("dragon", "драгон", "дракон"): ("🐲 DRAGON", "https://dg1.to/fyvfuwqoc"),
-        ("cabura", "кабура"): ("🎰 CABURA", "https://cabura-mirror.com/"),
-        ("wilder", "вайлдер"): ("🐺 WILDER", "https://wilder-casino.com/"),
-        ("bitzamo", "битзамо"): ("💎 BITZAMO", "https://bitzamo-mirror.com/"),
-        ("selector", "селектор"): ("🎯 SELECTOR", "https://selector-mirror.com/"),
-        ("friends", "френдс", "френдз"): ("👥 FRIENDS", "https://friends-mirror.com/"),
-        ("turbo", "турбо"): ("⚡ TURBO", "https://turbo-mirror.com/"),
-        ("brillx", "бриллкс"): ("✨ BRILLX", "https://brillx-mirror.com/"),
-        ("blitz", "блиц"): ("🔥 BLITZ", "https://blitz-mirror.com/"),
-    }
+    casino = _find_casino(message_lower)
 
-    # Казино-ссылки только если нет явного обращения к боту
-    if not (is_private or is_reply_to_bot or is_mentioned):
-        for triggers, (name, link) in casinos.items():
-            if any(trigger in message_lower for trigger in triggers):
-                await update.message.reply_text(f"{name}\n\n🔗 {link}")
-                return
+    # В группе без обращения — только ссылка
+    if casino and not (is_private or is_reply_to_bot or is_mentioned):
+        await update.message.reply_text(f"{casino['name']}\n\n🔗 {casino['link']}")
+        return
 
-    if is_mentioned or is_reply_to_bot or is_private:
-        for triggers, (name, link) in casinos.items():
-            # В обращении к боту казино срабатывает только если сообщение короткое/прямо про бренд
-            words = set(message_lower.replace("@", " ").split())
-            if any(trigger in words for trigger in triggers) and len(words) <= 3:
-                await update.message.reply_text(f"{name}\n\n🔗 {link}")
-                return
+    # При обращении к боту — рассказ + ссылка (без GPT)
+    if casino and (is_private or is_reply_to_bot or is_mentioned):
+        await update.message.reply_text(
+            f"{casino['name']}\n\n{casino['about']}\n\n🔗 {casino['link']}"
+        )
+        return
 
     # Только явный вопрос про создателя — иначе обычный чат через GPT
     creator_triggers = [
@@ -656,20 +749,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(conversation_history[user_id])
-        response = await asyncio.to_thread(
-            lambda: get_openai_client().chat.completions.create(
-                model="gpt-4o-mini",
-                messages=messages,
-                max_tokens=700,
-                temperature=0.7,
+        try:
+            assistant_message = await _openai_chat_http(messages)
+        except Exception as http_err:
+            logger.warning(f"Chat HTTP failed, trying SDK: {http_err}")
+            response = await asyncio.to_thread(
+                lambda: get_openai_client().chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=messages,
+                    max_tokens=700,
+                    temperature=0.7,
+                )
             )
-        )
-        assistant_message = response.choices[0].message.content
+            assistant_message = response.choices[0].message.content
         conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
         await update.message.reply_text(assistant_message)
     except Exception as e:
         logger.error(f"Ошибка чата: {e}")
-        # убираем неудачный user-message из истории, чтобы не копить мусор
         if conversation_history.get(user_id):
             conversation_history[user_id] = conversation_history[user_id][:-1]
         err = str(e).lower()
@@ -677,10 +773,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             text = "🔑 Проблема с OPENAI_API_KEY на сервере. Проверь переменные окружения."
         elif "quota" in err or "billing" in err or "insufficient" in err or "429" in err:
             text = "💳 OpenAI: закончился лимит/баланс. Проверь billing в platform.openai.com"
+        elif "connection" in err or "connect" in err or "name or service not known" in err:
+            text = "🌐 Сервер не достучался до OpenAI. Попробуй ещё раз через минуту."
         elif "520" in err or "502" in err or "503" in err or "timeout" in err:
             text = "⏳ OpenAI временно недоступен. Попробуй через минуту."
         else:
-            text = "Техническая заминка. Попробуй ещё раз."
+            short = str(e).replace("\n", " ")
+            if len(short) > 180:
+                short = short[:177] + "..."
+            text = f"Техническая заминка: {short}"
         await update.message.reply_text(text)
 
 
