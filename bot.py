@@ -3,12 +3,14 @@ Telegram бот с ИИ
 """
 
 import os
+import base64
 import logging
 import random
 import asyncio
 import aiohttp
+from io import BytesIO
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes
 from openai import OpenAI
 
@@ -90,36 +92,82 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("История очищена! ✨")
 
 
+async def _generate_image_bytes(prompt: str) -> bytes:
+    """Generate image bytes via OpenAI, with model fallback and retries."""
+    client = get_openai_client()
+    models = ["gpt-image-1-mini", "gpt-image-1", "gpt-image-1.5"]
+    last_error: Exception | None = None
+
+    for model in models:
+        for attempt in range(3):
+            try:
+                response = await asyncio.to_thread(
+                    lambda m=model: client.images.generate(
+                        model=m,
+                        prompt=prompt,
+                        size="1024x1024",
+                        n=1,
+                    )
+                )
+                item = response.data[0]
+                if getattr(item, "b64_json", None):
+                    return base64.b64decode(item.b64_json)
+                if getattr(item, "url", None):
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(item.url) as resp:
+                            resp.raise_for_status()
+                            return await resp.read()
+                raise ValueError("OpenAI не вернул изображение")
+            except Exception as e:
+                last_error = e
+                msg = str(e).lower()
+                # content policy / bad prompt — no point retrying other models hard
+                if "safety" in msg or "content_policy" in msg or "moderation" in msg:
+                    raise
+                logger.warning(f"Image gen failed model={model} attempt={attempt + 1}: {e}")
+                await asyncio.sleep(1.5 * (attempt + 1))
+                # On invalid model, skip retries and try next model
+                if "does not exist" in msg or "invalid_value" in msg or "model" in msg and "not" in msg:
+                    break
+
+    raise last_error or RuntimeError("Не удалось сгенерировать изображение")
+
+
 async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not context.args:
         await update.message.reply_text("Напиши что нарисовать: /draw котик в космосе")
         return
     prompt = " ".join(context.args)
+    status = await update.message.reply_text("🎨 Рисую... подожди немного")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
     try:
-        import base64
-        from io import BytesIO
-
-        response = await asyncio.to_thread(
-            lambda: get_openai_client().images.generate(
-                model="gpt-image-1",
-                prompt=prompt,
-                size="1024x1024",
-                n=1,
-            )
+        image_bytes = await _generate_image_bytes(prompt)
+        photo = BytesIO(image_bytes)
+        photo.name = "draw.png"
+        photo.seek(0)
+        await update.message.reply_photo(
+            photo=InputFile(photo, filename="draw.png"),
+            caption=f"🎨 {prompt}",
         )
-        item = response.data[0]
-        if getattr(item, "b64_json", None):
-            photo = BytesIO(base64.b64decode(item.b64_json))
-            photo.name = "draw.png"
-        elif getattr(item, "url", None):
-            photo = item.url
-        else:
-            raise ValueError("OpenAI не вернул изображение")
-        await update.message.reply_photo(photo=photo, caption=f"🎨 {prompt}")
+        try:
+            await status.delete()
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Ошибка генерации изображения: {e}")
-        await update.message.reply_text("Не получилось нарисовать, попробуй другой запрос.")
+        err = str(e)
+        if "safety" in err.lower() or "content_policy" in err.lower() or "moderation" in err.lower():
+            text = "🚫 OpenAI отклонил запрос по правилам. Попробуй другую формулировку."
+        elif "520" in err or "retryable" in err.lower() or "timeout" in err.lower():
+            text = "⏳ OpenAI сейчас тупит (временный сбой). Попробуй ещё раз через минуту."
+        elif "billing" in err.lower() or "quota" in err.lower() or "insufficient" in err.lower():
+            text = "💳 Проблема с оплатой/квотой OpenAI. Проверь баланс в platform.openai.com"
+        else:
+            text = "Не получилось нарисовать, попробуй другой запрос."
+        try:
+            await status.edit_text(text)
+        except Exception:
+            await update.message.reply_text(text)
 
 
 async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
