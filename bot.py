@@ -31,7 +31,7 @@ def get_openai_client() -> OpenAI:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY не установлен")
-        _client = OpenAI(api_key=api_key)
+        _client = OpenAI(api_key=api_key, timeout=60.0)
     return _client
 
 SYSTEM_PROMPT = """Ты — Батя, весёлый AI-пацан, который всегда в теме.
@@ -440,25 +440,46 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not update.message or not update.message.text:
+        return
+
     user_id = update.effective_user.id
     user_message = update.message.text
     message_lower = user_message.lower()
-    
+
     bot_names = ["бот", "bot", "батя", "батю", "бать"]
     is_private = update.effective_chat.type == "private"
-    
+
+    me = await context.bot.get_me()
+    bot_username = (me.username or "").lower()
+
     if not is_private:
         is_reply_to_bot = False
         if update.message.reply_to_message:
             reply_from = update.message.reply_to_message.from_user
-            if reply_from and reply_from.id == context.bot.id:
+            if reply_from and reply_from.id == me.id:
                 is_reply_to_bot = True
-        bot_username = (await context.bot.get_me()).username.lower()
-        is_mentioned = any(name in message_lower for name in bot_names) or f"@{bot_username}" in message_lower
+
+        is_mentioned = (
+            any(name in message_lower for name in bot_names)
+            or (bot_username and f"@{bot_username}" in message_lower)
+        )
+
+        # Telegram mention entities (@username / text_mention)
+        if not is_mentioned and update.message.entities:
+            for ent in update.message.entities:
+                if ent.type == "mention":
+                    mentioned = user_message[ent.offset: ent.offset + ent.length].lower()
+                    if bot_username and mentioned == f"@{bot_username}":
+                        is_mentioned = True
+                        break
+                if ent.type == "text_mention" and ent.user and ent.user.id == me.id:
+                    is_mentioned = True
+                    break
     else:
         is_reply_to_bot = True
         is_mentioned = True
-    
+
     casinos = {
         ("ezcash", "изикеш", "езкеш", "изик"): ("🦈 EZCASH", "https://ezcash-mirror.com/"),
         ("dragon", "драгон", "дракон"): ("🐲 DRAGON", "https://dg1.to/fyvfuwqoc"),
@@ -471,12 +492,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ("brillx", "бриллкс"): ("✨ BRILLX", "https://brillx-mirror.com/"),
         ("blitz", "блиц"): ("🔥 BLITZ", "https://blitz-mirror.com/"),
     }
-    
-    for triggers, (name, link) in casinos.items():
-        if any(trigger in message_lower for trigger in triggers):
-            await update.message.reply_text(f"{name}\n\n🔗 {link}")
-            return
-    
+
+    # Казино-ссылки только если нет явного обращения к боту
+    if not (is_private or is_reply_to_bot or is_mentioned):
+        for triggers, (name, link) in casinos.items():
+            if any(trigger in message_lower for trigger in triggers):
+                await update.message.reply_text(f"{name}\n\n🔗 {link}")
+                return
+
+    if is_mentioned or is_reply_to_bot or is_private:
+        for triggers, (name, link) in casinos.items():
+            # В обращении к боту казино срабатывает только если сообщение короткое/прямо про бренд
+            words = set(message_lower.replace("@", " ").split())
+            if any(trigger in words for trigger in triggers) and len(words) <= 3:
+                await update.message.reply_text(f"{name}\n\n🔗 {link}")
+                return
+
     # Только явный вопрос про создателя — иначе обычный чат через GPT
     creator_triggers = [
         "кто тебя создал",
@@ -495,32 +526,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         ]
         await update.message.reply_text(random.choice(responses))
         return
-    
+
     if not is_private and not is_reply_to_bot and not is_mentioned:
         return
-    
+
     if user_id not in conversation_history:
         conversation_history[user_id] = []
     conversation_history[user_id].append({"role": "user", "content": user_message})
     if len(conversation_history[user_id]) > 20:
         conversation_history[user_id] = conversation_history[user_id][-20:]
-    
+
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(conversation_history[user_id])
-        response = get_openai_client().chat.completions.create(
-            model="gpt-4o-mini",
-            messages=messages,
-            max_tokens=300,
-            temperature=0.8
+        response = await asyncio.to_thread(
+            lambda: get_openai_client().chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                max_tokens=300,
+                temperature=0.8,
+            )
         )
         assistant_message = response.choices[0].message.content
         conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
         await update.message.reply_text(assistant_message)
     except Exception as e:
-        logger.error(f"Ошибка: {e}")
-        await update.message.reply_text("Техническая заминка. Попробуй ещё раз.")
+        logger.error(f"Ошибка чата: {e}")
+        # убираем неудачный user-message из истории, чтобы не копить мусор
+        if conversation_history.get(user_id):
+            conversation_history[user_id] = conversation_history[user_id][:-1]
+        err = str(e).lower()
+        if "api_key" in err or "credentials" in err or "401" in err or "incorrect api key" in err:
+            text = "🔑 Проблема с OPENAI_API_KEY на сервере. Проверь переменные окружения."
+        elif "quota" in err or "billing" in err or "insufficient" in err or "429" in err:
+            text = "💳 OpenAI: закончился лимит/баланс. Проверь billing в platform.openai.com"
+        elif "520" in err or "502" in err or "503" in err or "timeout" in err:
+            text = "⏳ OpenAI временно недоступен. Попробуй через минуту."
+        else:
+            text = "Техническая заминка. Попробуй ещё раз."
+        await update.message.reply_text(text)
 
 
 def main() -> None:
