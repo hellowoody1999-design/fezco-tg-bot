@@ -97,18 +97,28 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     prompt = " ".join(context.args)
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
     try:
+        import base64
+        from io import BytesIO
+
         response = await asyncio.to_thread(
             lambda: get_openai_client().images.generate(
-                model="dall-e-3",
+                model="gpt-image-1",
                 prompt=prompt,
                 size="1024x1024",
-                quality="standard",
                 n=1,
             )
         )
-        await update.message.reply_photo(photo=response.data[0].url, caption=f"🎨 {prompt}")
+        item = response.data[0]
+        if getattr(item, "b64_json", None):
+            photo = BytesIO(base64.b64decode(item.b64_json))
+            photo.name = "draw.png"
+        elif getattr(item, "url", None):
+            photo = item.url
+        else:
+            raise ValueError("OpenAI не вернул изображение")
+        await update.message.reply_photo(photo=photo, caption=f"🎨 {prompt}")
     except Exception as e:
-        logger.error(f"Ошибка DALL-E: {e}")
+        logger.error(f"Ошибка генерации изображения: {e}")
         await update.message.reply_text("Не получилось нарисовать, попробуй другой запрос.")
 
 
