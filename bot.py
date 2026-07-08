@@ -90,20 +90,35 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def _generate_image_bytes(prompt: str) -> bytes:
     """Generate image bytes via OpenAI, with model fallback and retries."""
     client = get_openai_client()
+    # mini first: faster/cheaper and works without org verification
     models = ["gpt-image-1-mini", "gpt-image-1", "gpt-image-1.5"]
     last_error: Exception | None = None
 
     for model in models:
-        for attempt in range(3):
+        for attempt in range(2):
             try:
-                response = await asyncio.to_thread(
-                    lambda m=model: client.images.generate(
-                        model=m,
-                        prompt=prompt,
-                        size="1024x1024",
-                        n=1,
-                    )
-                )
+                def _call(m=model):
+                    try:
+                        return client.images.generate(
+                            model=m,
+                            prompt=prompt,
+                            size="1024x1024",
+                            quality="low",
+                            n=1,
+                        )
+                    except Exception as e:
+                        # quality not supported on some models/SDK versions
+                        msg = str(e).lower()
+                        if "quality" in msg or "unexpected" in msg or "unknown" in msg:
+                            return client.images.generate(
+                                model=m,
+                                prompt=prompt,
+                                size="1024x1024",
+                                n=1,
+                            )
+                        raise
+
+                response = await asyncio.to_thread(_call)
                 item = response.data[0]
                 if getattr(item, "b64_json", None):
                     return base64.b64decode(item.b64_json)
@@ -116,16 +131,36 @@ async def _generate_image_bytes(prompt: str) -> bytes:
             except Exception as e:
                 last_error = e
                 msg = str(e).lower()
-                # content policy / bad prompt — no point retrying other models hard
                 if "safety" in msg or "content_policy" in msg or "moderation" in msg:
                     raise
+                if "verified" in msg or "verify organization" in msg:
+                    raise
                 logger.warning(f"Image gen failed model={model} attempt={attempt + 1}: {e}")
-                await asyncio.sleep(1.5 * (attempt + 1))
-                # On invalid model, skip retries and try next model
-                if "does not exist" in msg or "invalid_value" in msg or "model" in msg and "not" in msg:
+                await asyncio.sleep(1.2 * (attempt + 1))
+                if "does not exist" in msg or "invalid_value" in msg or ("model" in msg and "not" in msg):
+                    break
+                if "403" in msg or "permission" in msg:
                     break
 
     raise last_error or RuntimeError("Не удалось сгенерировать изображение")
+
+
+def _to_telegram_photo(image_bytes: bytes) -> BytesIO:
+    """Convert image bytes to a Telegram-friendly JPEG buffer."""
+    try:
+        from PIL import Image
+        img = Image.open(BytesIO(image_bytes)).convert("RGB")
+        out = BytesIO()
+        out.name = "draw.jpg"
+        img.save(out, format="JPEG", quality=85, optimize=True)
+        out.seek(0)
+        return out
+    except Exception:
+        # Fallback: send original bytes as PNG
+        photo = BytesIO(image_bytes)
+        photo.name = "draw.png"
+        photo.seek(0)
+        return photo
 
 
 async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -133,16 +168,17 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Напиши что нарисовать: /draw котик в космосе")
         return
     prompt = " ".join(context.args)
-    status = await update.message.reply_text("🎨 Рисую... подожди немного")
+    status = await update.message.reply_text("🎨 Рисую... подожди 10-30 сек")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
     try:
         image_bytes = await _generate_image_bytes(prompt)
-        photo = BytesIO(image_bytes)
-        photo.name = "draw.png"
-        photo.seek(0)
+        photo = _to_telegram_photo(image_bytes)
+        caption = f"🎨 {prompt}"
+        if len(caption) > 900:
+            caption = caption[:897] + "..."
         await update.message.reply_photo(
-            photo=InputFile(photo, filename="draw.png"),
-            caption=f"🎨 {prompt}",
+            photo=InputFile(photo, filename=getattr(photo, "name", "draw.jpg")),
+            caption=caption,
         )
         try:
             await status.delete()
@@ -151,14 +187,22 @@ async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as e:
         logger.error(f"Ошибка генерации изображения: {e}")
         err = str(e)
-        if "safety" in err.lower() or "content_policy" in err.lower() or "moderation" in err.lower():
+        err_l = err.lower()
+        if "safety" in err_l or "content_policy" in err_l or "moderation" in err_l:
             text = "🚫 OpenAI отклонил запрос по правилам. Попробуй другую формулировку."
-        elif "520" in err or "retryable" in err.lower() or "timeout" in err.lower():
+        elif "verified" in err_l or "verify organization" in err_l:
+            text = "🔐 Нужна верификация организации OpenAI: platform.openai.com → Settings → Organization → Verify"
+        elif "520" in err or "502" in err or "503" in err or "retryable" in err_l or "timeout" in err_l:
             text = "⏳ OpenAI сейчас тупит (временный сбой). Попробуй ещё раз через минуту."
-        elif "billing" in err.lower() or "quota" in err.lower() or "insufficient" in err.lower():
+        elif "billing" in err_l or "quota" in err_l or "insufficient" in err_l or "429" in err:
             text = "💳 Проблема с оплатой/квотой OpenAI. Проверь баланс в platform.openai.com"
+        elif "api_key" in err_l or "credentials" in err_l or "401" in err or "incorrect api key" in err_l:
+            text = "🔑 На сервере нет/битый OPENAI_API_KEY. Добавь ключ в переменные окружения и сделай redeploy."
         else:
-            text = "Не получилось нарисовать, попробуй другой запрос."
+            short = err.replace("\n", " ")
+            if len(short) > 180:
+                short = short[:177] + "..."
+            text = f"❌ Не нарисовал.\nПричина: {short}"
         try:
             await status.edit_text(text)
         except Exception:
