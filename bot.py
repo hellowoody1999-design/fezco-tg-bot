@@ -419,8 +419,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"{name}\n\n🔗 {link}")
             return
     
-    fezco_triggers = ["fezco", "фезко", "фэзко", "создател", "кто тебя создал", "кто твой хозяин"]
-    if any(trigger in message_lower for trigger in fezco_triggers):
+    # Только явный вопрос про создателя — иначе обычный чат через GPT
+    creator_triggers = [
+        "кто тебя создал",
+        "кто твой хозяин",
+        "кто твой создатель",
+        "кто создал тебя",
+        "кто тебя сделал",
+        "кто написал тебя",
+        "кто твой папа",
+    ]
+    if any(trigger in message_lower for trigger in creator_triggers):
         responses = [
             "Fezco — это ёбаный БОГ, понял? 🙏 Создатель всего сущего, блять!",
             "Ты чё, не знаешь кто такой Fezco?! Это ЛЕГЕНДА, сука! Преклонись! 👑",
