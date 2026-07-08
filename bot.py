@@ -91,8 +91,25 @@ async def clear(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def draw(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text("🎨 Генерация изображений временно недоступна (требует платный API)")
-    return
+    if not context.args:
+        await update.message.reply_text("Напиши что нарисовать: /draw котик в космосе")
+        return
+    prompt = " ".join(context.args)
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="upload_photo")
+    try:
+        response = await asyncio.to_thread(
+            lambda: get_openai_client().images.generate(
+                model="dall-e-3",
+                prompt=prompt,
+                size="1024x1024",
+                quality="standard",
+                n=1,
+            )
+        )
+        await update.message.reply_photo(photo=response.data[0].url, caption=f"🎨 {prompt}")
+    except Exception as e:
+        logger.error(f"Ошибка DALL-E: {e}")
+        await update.message.reply_text("Не получилось нарисовать, попробуй другой запрос.")
 
 
 async def voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
