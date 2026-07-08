@@ -20,11 +20,8 @@ load_dotenv(dotenv_path=env_path)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Используем DeepSeek API (бесплатная альтернатива OpenAI)
-client = OpenAI(
-    api_key=os.getenv("DEEPSEEK_API_KEY", "sk-dummy"),  # Fallback на dummy key
-    base_url="https://api.deepseek.com"
-)
+# Используем OpenAI (ChatGPT)
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 SYSTEM_PROMPT = """Ты — Батя, весёлый AI-пацан, который всегда в теме.
 
@@ -379,13 +376,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         is_mentioned = True
     
     casinos = {
-        ("mellstroy", "мелстрой"): ("🌟 Mellstroy", "https://golnk.ru/QwWYB"),
-        ("stake", "стейк"): ("🥩 STAKE", "https://stakerus.com/"),
-        ("1win", "1вин", "ванвин"): ("😂 1WIN", "https://1vvswify.com/?open=register&p=ol84"),
-        ("ezcash", "изикеш", "езкеш", "изик"): ("🦈 EZCASH", "https://ezcash-casino10.fun/"),
+        ("ezcash", "изикеш", "езкеш", "изик"): ("🦈 EZCASH", "https://ezcash-mirror.com/"),
         ("dragon", "драгон", "дракон"): ("🐲 DRAGON", "https://dg1.to/fyvfuwqoc"),
-        ("kent", "кент"): ("🤫 KENT", "https://mealmenalc.com/d96995d83"),
-        ("cat", "кэт", "кет"): ("💅 CAT", "https://catchthecatthree.com/dcb903109"),
+        ("cabura", "кабура"): ("🎰 CABURA", "https://cabura-mirror.com/"),
+        ("wilder", "вайлдер"): ("🐺 WILDER", "https://wilder-casino.com/"),
+        ("bitzamo", "битзамо"): ("💎 BITZAMO", "https://bitzamo-mirror.com/"),
+        ("selector", "селектор"): ("🎯 SELECTOR", "https://selector-mirror.com/"),
+        ("friends", "френдс", "френдз"): ("👥 FRIENDS", "https://friends-mirror.com/"),
+        ("turbo", "турбо"): ("⚡ TURBO", "https://turbo-mirror.com/"),
+        ("brillx", "бриллкс"): ("✨ BRILLX", "https://brillx-mirror.com/"),
+        ("blitz", "блиц"): ("🔥 BLITZ", "https://blitz-mirror.com/"),
     }
     
     for triggers, (name, link) in casinos.items():
@@ -417,7 +417,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(conversation_history[user_id])
         response = client.chat.completions.create(
-            model="deepseek-chat",  # Бесплатная модель DeepSeek
+            model="gpt-4o-mini",
             messages=messages,
             max_tokens=300,
             temperature=0.8
@@ -434,6 +434,8 @@ def main() -> None:
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     if not token:
         raise ValueError("TELEGRAM_BOT_TOKEN не установлен")
+    if not os.getenv("OPENAI_API_KEY"):
+        raise ValueError("OPENAI_API_KEY не установлен")
     
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("batya", batya))
