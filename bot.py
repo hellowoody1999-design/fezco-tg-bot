@@ -20,8 +20,17 @@ load_dotenv(dotenv_path=env_path)
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Используем OpenAI (ChatGPT)
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_client: OpenAI | None = None
+
+
+def get_openai_client() -> OpenAI:
+    global _client
+    if _client is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY не установлен")
+        _client = OpenAI(api_key=api_key)
+    return _client
 
 SYSTEM_PROMPT = """Ты — Батя, весёлый AI-пацан, который всегда в теме.
 
@@ -416,7 +425,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         messages.extend(conversation_history[user_id])
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model="gpt-4o-mini",
             messages=messages,
             max_tokens=300,
@@ -436,6 +445,7 @@ def main() -> None:
         raise ValueError("TELEGRAM_BOT_TOKEN не установлен")
     if not os.getenv("OPENAI_API_KEY"):
         raise ValueError("OPENAI_API_KEY не установлен")
+    get_openai_client()
     
     application = Application.builder().token(token).build()
     application.add_handler(CommandHandler("batya", batya))
